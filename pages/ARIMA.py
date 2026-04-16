@@ -5,12 +5,17 @@ from statsmodels.tsa.arima.model import ARIMA
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import numpy as np
 import warnings
-from utils import get_connection
+from utils import get_connection, sidebar_product_selector
 
 warnings.filterwarnings("ignore")
 
 st.set_page_config(page_title="Prévision ARIMA", page_icon="🟢")
 st.title("📈 Dashboard Prévision des Ventes - ARIMA")
+
+# =========================
+# Sidebar — Sélecteur produit
+# =========================
+product = sidebar_product_selector()
 
 # =========================
 # Load Data
@@ -29,19 +34,16 @@ def load_data():
 
 df = load_data()
 
-product = st.session_state.get("product", None)
-if product is None:
-    st.warning("⚠️ Choisissez un produit depuis la page principale")
-    st.stop()
-
 # =========================
 # Préparation + Lissage des données (Daily)
 # =========================
 @st.cache_data
 def prepare_and_smooth(df, product):
-    df_prod = df[df['ref_product'] == product].copy()
+    # Filtrer par produit si pas "Tous"
+    if product is not None:
+        df = df[df['ref_product'] == product].copy()
 
-    df_d = (df_prod
+    df_d = (df
             .groupby(pd.Grouper(key='date_time', freq='D'))['quantity']
             .sum()
             .reset_index()
@@ -52,7 +54,6 @@ def prepare_and_smooth(df, product):
     df_d['y'] = df_d['y'].interpolate(method='linear')
     df_d['y'] = df_d['y'].fillna(method='bfill').fillna(method='ffill')
 
-    # Rolling sur 7 jours (au lieu de 4 semaines)
     df_d['y'] = df_d['y'].rolling(window=7, min_periods=1, center=True).mean()
 
     mean_y = df_d['y'].mean()
@@ -65,7 +66,8 @@ def prepare_and_smooth(df, product):
 
 df_model = prepare_and_smooth(df, product)
 
-st.info(f"📅 Série lissée (journalière, rolling 7 jours) — **{len(df_model)} points**")
+label_produit = product if product else "Tous les produits"
+st.info(f"📅 [{label_produit}] Série lissée (journalière, rolling 7 jours) — **{len(df_model)} points**")
 
 if len(df_model) < 30:
     st.warning("⚠️ Pas assez de données pour ARIMA avec ce produit.")
@@ -166,11 +168,11 @@ mape_bar = max(0.0, 100.0 - min(mape, 100.0))
 chart_start = pd.Timestamp("2024-01-01")
 chart_end   = pd.Timestamp("2026-12-31")
 
-train_chart       = train_df[train_df['ds'] >= chart_start]
-test_chart        = test_df[(test_df['ds'] >= chart_start) & (test_df['ds'] <= chart_end)]
-test_preds_s      = pd.Series(test_preds, index=test_df['ds'])
-test_preds_chart  = test_preds_s[(test_preds_s.index >= chart_start) & (test_preds_s.index <= chart_end)]
-forecast_chart    = forecast[(forecast['ds'] >= chart_start) & (forecast['ds'] <= chart_end)]
+train_chart      = train_df[train_df['ds'] >= chart_start]
+test_chart       = test_df[(test_df['ds'] >= chart_start) & (test_df['ds'] <= chart_end)]
+test_preds_s     = pd.Series(test_preds, index=test_df['ds'])
+test_preds_chart = test_preds_s[(test_preds_s.index >= chart_start) & (test_preds_s.index <= chart_end)]
+forecast_chart   = forecast[(forecast['ds'] >= chart_start) & (forecast['ds'] <= chart_end)]
 
 # =========================
 # TABS
@@ -184,7 +186,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 
 # ── Tab 1 : Graphique ──────────────────────────────────────────────────────────
 with tab1:
-    st.subheader(f"Historique + Prévision — {product} (2024–2026)")
+    st.subheader(f"Historique + Prévision — {label_produit} (2024–2026)")
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(

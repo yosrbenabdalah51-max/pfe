@@ -8,12 +8,17 @@ import plotly.graph_objects as go
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import warnings
-from utils import get_connection
+from utils import get_connection, sidebar_product_selector
 
 warnings.filterwarnings("ignore")
 
 st.set_page_config(page_title="LSTM", page_icon="🔴")
 st.title("📈 Prévision avec LSTM")
+
+# =========================
+# Sidebar — Sélecteur produit
+# =========================
+product = sidebar_product_selector()
 
 # =========================
 # Load Data
@@ -32,19 +37,16 @@ def load_data():
 
 df = load_data()
 
-product = st.session_state.get("product", None)
-if product is None:
-    st.warning("⚠️ Choisissez un produit depuis la page principale")
-    st.stop()
-
 # =========================
 # Préparation + Lissage des données (Daily)
 # =========================
 @st.cache_data
 def prepare_and_smooth(df, product):
-    df_prod = df[df['ref_product'] == product].copy()
+    # Filtrer par produit si pas "Tous"
+    if product is not None:
+        df = df[df['ref_product'] == product].copy()
 
-    df_d = (df_prod
+    df_d = (df
             .groupby(pd.Grouper(key='date_time', freq='D'))['quantity']
             .sum()
             .reset_index()
@@ -55,7 +57,6 @@ def prepare_and_smooth(df, product):
     df_d['y'] = df_d['y'].interpolate(method='linear')
     df_d['y'] = df_d['y'].fillna(method='bfill').fillna(method='ffill')
 
-    # Rolling sur 7 jours
     df_d['y'] = df_d['y'].rolling(window=7, min_periods=1, center=True).mean()
 
     mean_y = df_d['y'].mean()
@@ -68,9 +69,10 @@ def prepare_and_smooth(df, product):
 
 df_model = prepare_and_smooth(df, product)
 
-st.info(f"📅 Série lissée (journalière, rolling 7 jours) — **{len(df_model)} points**")
+label_produit = product if product else "Tous les produits"
+st.info(f"📅 [{label_produit}] Série lissée (journalière, rolling 7 jours) — **{len(df_model)} points**")
 
-SEQ_LENGTH = 30  # 30 jours de contexte (au lieu de 8 semaines)
+SEQ_LENGTH = 30
 
 if len(df_model) < SEQ_LENGTH + 30:
     st.warning("⚠️ Pas assez de données pour LSTM avec ce produit.")
@@ -193,13 +195,13 @@ train_chart_mask  = train_dates >= chart_start
 train_dates_chart = train_dates[train_chart_mask]
 train_vals_chart  = train_values[train_chart_mask]
 
-test_dates_pd     = pd.DatetimeIndex(test_dates)
-test_chart_mask   = (test_dates_pd >= chart_start) & (test_dates_pd <= chart_end)
-test_dates_chart  = test_dates_pd[test_chart_mask]
-y_true_chart      = y_true[test_chart_mask]
-y_pred_chart      = y_pred[test_chart_mask]
+test_dates_pd    = pd.DatetimeIndex(test_dates)
+test_chart_mask  = (test_dates_pd >= chart_start) & (test_dates_pd <= chart_end)
+test_dates_chart = test_dates_pd[test_chart_mask]
+y_true_chart     = y_true[test_chart_mask]
+y_pred_chart     = y_pred[test_chart_mask]
 
-forecast_chart    = forecast[(forecast['ds'] >= chart_start) & (forecast['ds'] <= chart_end)]
+forecast_chart   = forecast[(forecast['ds'] >= chart_start) & (forecast['ds'] <= chart_end)]
 
 # =========================
 # TABS
@@ -213,7 +215,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 
 # ── Tab 1 : Graphique ──────────────────────────────────────────────────────────
 with tab1:
-    st.subheader(f"Historique + Prévision — {product} (2024–2026)")
+    st.subheader(f"Historique + Prévision — {label_produit} (2024–2026)")
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(

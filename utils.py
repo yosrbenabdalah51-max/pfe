@@ -1,11 +1,14 @@
-import streamlit as st
-import pandas as pd
 import mysql.connector
 import os
+import pandas as pd
+import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# =========================
+# Connexion BD
+# =========================
 def get_connection():
     conn = mysql.connector.connect(
         host=os.getenv("DB_HOST"),
@@ -19,91 +22,58 @@ def get_connection():
 def get_data(query):
     conn = get_connection()
     cursor = conn.cursor()
-
     cursor.execute(query)
     data = cursor.fetchall()
-
     conn.close()
     return data
+
+
 # =========================
-# PRODUCTS LIST 🔥
+# Sidebar — Sélecteur produit
 # =========================
-@st.cache_data(ttl=600)
-def load_product_list():
+@st.cache_data
+def load_product_ranking():
+    """Charge tous les produits triés par ventes décroissantes."""
     conn = get_connection()
-
-    query = """
-    SELECT 
-        p.ref_product,
-        p.name,
-        COALESCE(SUM(s.quantity * s.price), 0) as total_sales
-    FROM product p
-    LEFT JOIN sales s 
-        ON p.ref_product = s.ref_product
-    GROUP BY p.ref_product, p.name
-    ORDER BY total_sales DESC
-    """
-
-    df = pd.read_sql(query, conn)
-    conn.close()
-
-    # nettoyage
-    df["ref_product"] = df["ref_product"].astype(str)
-    df["name"] = df["name"].fillna("Unknown")
-
-    df["label"] = df["ref_product"] + " (" + df["name"] + ")"
-
-    return df
-# =========================
-# SIDEBAR FILTER (SMART)
-# =========================
-def sidebar_product_filter():
-    df = load_product_list()
-
-    st.sidebar.title(" Produits")
-
-    selected = st.sidebar.selectbox(
-        "Choisir un produit",
-        df["label"]
+    df = pd.read_sql(
+        "SELECT ref_product, quantity, price FROM sales", conn
     )
+    conn.close()
+    df['total'] = df['quantity'] * df['price']
+    product_rank = (df.groupby('ref_product')['total']
+                    .sum()
+                    .reset_index()
+                    .sort_values(by='total', ascending=False))
+    return product_rank
 
-    product = df.loc[
-        df["label"] == selected,
-        "ref_product"
-    ].values[0]
+
+def sidebar_product_selector():
+    """
+    Affiche dans le sidebar un selectbox de produits triés par ventes.
+    La première option est 'Tous' (entraîne le modèle sur tous les produits).
+    Retourne le produit sélectionné (str) ou None si 'Tous'.
+    Stocke aussi la valeur dans st.session_state['product'].
+    """
+    product_rank = load_product_ranking()
+
+    # Construction des labels : "Tous" en premier, puis produits triés
+    labels = ["🌐 Tous les produits"] + [
+        f"{row['ref_product']}  (💰 {int(row['total'])})"
+        for _, row in product_rank.iterrows()
+    ]
+
+    st.sidebar.header("🎯 Produit")
+    selected_label = st.sidebar.selectbox("Choisir un produit", labels)
+
+    if selected_label == "🌐 Tous les produits":
+        product = None  # signifie "tous"
+    else:
+        product = product_rank[
+            product_rank.apply(
+                lambda x: f"{x['ref_product']}  (💰 {int(x['total'])})" == selected_label,
+                axis=1
+            )
+        ]["ref_product"].values[0]
 
     st.session_state["product"] = product
-
     return product
-    # =========================
-# DAILY SERIES (FIXED + STRONG)
-# =========================
-@st.cache_data(ttl=600)
-def prepare_daily_series(product):
-    conn = get_connection()
-
-    query = """
-    SELECT 
-        DATE(date_time) as ds,
-        SUM(quantity) as y
-    FROM sales
-    WHERE ref_product = %s
-    GROUP BY DATE(date_time)
-    ORDER BY ds
-    """
-
-    df = pd.read_sql(query, conn, params=(product,))
-
-    conn.close()  
-    if df.empty:
-        return df
-
-    df["ds"] = pd.to_datetime(df["ds"])
-
-    # fill missing days (CRUCIAL 🔥)
-    df = df.set_index("ds").asfreq("D").fillna(0).reset_index()
-
-    return df
-
-
-

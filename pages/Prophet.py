@@ -5,12 +5,17 @@ import plotly.graph_objects as go
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import numpy as np
 import warnings
-from utils import get_connection
+from utils import get_connection, sidebar_product_selector
 
 warnings.filterwarnings("ignore")
 
 st.set_page_config(page_title="Prophet Dashboard", page_icon="📊", layout="wide")
 st.title("📈 Prévision de ventes avec Prophet")
+
+# =========================
+# Sidebar — Sélecteur produit
+# =========================
+product = sidebar_product_selector()
 
 # =========================
 # Load Data
@@ -29,19 +34,16 @@ def load_data():
 
 df = load_data()
 
-product = st.session_state.get("product", None)
-if product is None:
-    st.warning("⚠️ Choisissez un produit depuis la page principale")
-    st.stop()
-
 # =========================
 # Préparation + Lissage des données (Daily)
 # =========================
 @st.cache_data
 def prepare_and_smooth(df, product):
-    df_prod = df[df['ref_product'] == product].copy()
+    # Filtrer par produit si pas "Tous"
+    if product is not None:
+        df = df[df['ref_product'] == product].copy()
 
-    df_d = (df_prod
+    df_d = (df
             .groupby(pd.Grouper(key='date_time', freq='D'))['quantity']
             .sum()
             .reset_index()
@@ -52,7 +54,6 @@ def prepare_and_smooth(df, product):
     df_d['y'] = df_d['y'].interpolate(method='linear')
     df_d['y'] = df_d['y'].fillna(method='bfill').fillna(method='ffill')
 
-    # Rolling sur 7 jours
     df_d['y'] = df_d['y'].rolling(window=7, min_periods=1, center=True).mean()
 
     mean_y = df_d['y'].mean()
@@ -65,7 +66,8 @@ def prepare_and_smooth(df, product):
 
 df_model = prepare_and_smooth(df, product)
 
-st.info(f"📅 Série lissée (journalière, rolling 7 jours) — **{len(df_model)} points**")
+label_produit = product if product else "Tous les produits"
+st.info(f"📅 [{label_produit}] Série lissée (journalière, rolling 7 jours) — **{len(df_model)} points**")
 
 if len(df_model) < 30:
     st.warning("⚠️ Pas assez de données pour Prophet avec ce produit.")
@@ -129,9 +131,8 @@ def train_full_prophet(df_model):
 
 @st.cache_data
 def make_forecast(_model, last_date):
-    target       = pd.Timestamp("2026-12-31")
-    future_days  = max(1, (target - last_date).days)
-    future       = _model.make_future_dataframe(periods=future_days, freq='D')
+    future_days = 80 # ✅ prévoir seulement 3 mois (au lieu de 2026)
+    future = _model.make_future_dataframe(periods=future_days, freq='D')
     return _model.predict(future)
 
 with st.spinner("⏳ Génération des prévisions futures..."):
@@ -159,16 +160,16 @@ mape_bar = max(0.0, 100.0 - min(mape, 100.0))
 # Filtrage graphique : 2024 → 2026
 # =========================
 chart_start = pd.Timestamp("2024-01-01")
-chart_end   = pd.Timestamp("2026-12-31")
+chart_end = df_model['ds'].max() + pd.Timedelta(days=90)
 
-train_chart        = train_df[train_df['ds'] >= chart_start]
-test_chart         = test_df[(test_df['ds'] >= chart_start) & (test_df['ds'] <= chart_end)]
+train_chart         = train_df[train_df['ds'] >= chart_start]
+test_chart          = test_df[(test_df['ds'] >= chart_start) & (test_df['ds'] <= chart_end)]
 forecast_test_chart = forecast_test[
     (forecast_test['ds'] >= chart_start) & (forecast_test['ds'] <= chart_end)]
-forecast_future    = forecast[
+forecast_future = forecast[
     (forecast['ds'] > df_model['ds'].max()) &
-    (forecast['ds'] >= chart_start) &
-    (forecast['ds'] <= chart_end)]
+    (forecast['ds'] <= chart_end)
+]
 
 # =========================
 # TABS
@@ -182,7 +183,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 
 # ── Tab 1 : Graphique ──────────────────────────────────────────────────────────
 with tab1:
-    st.subheader(f"Historique & Prévision — {product} (2024–2026)")
+    st.subheader(f"Historique & Prévision — {label_produit} (2024–2026)")
 
     fig = go.Figure()
 
