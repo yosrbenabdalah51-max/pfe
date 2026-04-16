@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import mysql.connector
 import plotly.express as px
+from utils import get_connection
 
 # =========================
 # CONFIG
@@ -45,12 +46,8 @@ st.markdown("""
 @st.cache_data
 def load_data():
     try:
-        conn = mysql.connector.connect(
-            host="localhost",
-            user="streamlit_user",
-            password="Password123@",
-            database="pfe"
-        )
+        conn = get_connection()
+        
         df = pd.read_sql(
             "SELECT ref_product, quantity, price, date_time FROM sales",
             conn

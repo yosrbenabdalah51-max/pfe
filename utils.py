@@ -77,3 +77,10 @@ def sidebar_product_selector():
 
     st.session_state["product"] = product
     return product
+
+
+
+
+
+
+   
