@@ -1,16 +1,17 @@
 import streamlit as st
 import pandas as pd
-from prophet import Prophet
-import plotly.graph_objects as go
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import numpy as np
+import plotly.graph_objects as go
+from xgboost import XGBRegressor
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.preprocessing import StandardScaler
 import warnings
 from utils import get_connection, sidebar_product_selector
 
 warnings.filterwarnings("ignore")
 
-st.set_page_config(page_title="Prophet Dashboard", page_icon="📊", layout="wide")
-st.title("📈 Prévision de ventes avec Prophet")
+st.set_page_config(page_title="XGBoost Dashboard", page_icon="📊", layout="wide")
+st.title("📈 Prévision de ventes avec XGBoost")
 
 # =========================
 # Sidebar — Sélecteur produit
@@ -39,7 +40,6 @@ df = load_data()
 # =========================
 @st.cache_data
 def prepare_and_smooth(df, product):
-    # Filtrer par produit si pas "Tous"
     if product is not None:
         df = df[df['ref_product'] == product].copy()
 
@@ -52,14 +52,12 @@ def prepare_and_smooth(df, product):
     df_d = df_d.set_index('ds').asfreq('D').reset_index()
     df_d['y'] = df_d['y'].replace(0, np.nan)
     df_d['y'] = df_d['y'].interpolate(method='linear')
-    df_d['y'] = df_d['y'].fillna(method='bfill').fillna(method='ffill')
-
+    df_d['y'] = df_d['y'].bfill().ffill()
     df_d['y'] = df_d['y'].rolling(window=7, min_periods=1, center=True).mean()
 
     mean_y = df_d['y'].mean()
     std_y  = df_d['y'].std()
     df_d['y'] = df_d['y'].clip(lower=mean_y - 3 * std_y, upper=mean_y + 3 * std_y)
-
     df_d = df_d.dropna(subset=['y'])
     df_d = df_d[df_d['y'] > 0].reset_index(drop=True)
     return df_d
@@ -70,40 +68,94 @@ label_produit = product if product else "Tous les produits"
 st.info(f"📅 [{label_produit}] Série lissée (journalière, rolling 7 jours) — **{len(df_model)} points**")
 
 if len(df_model) < 30:
-    st.warning("⚠️ Pas assez de données pour Prophet avec ce produit.")
+    st.warning("⚠️ Pas assez de données pour XGBoost avec ce produit.")
     st.stop()
+
+# =========================
+# Feature Engineering
+# =========================
+def create_features(df):
+    """Génère les features temporelles et lag pour XGBoost."""
+    d = df.copy()
+    d['dayofweek']  = d['ds'].dt.dayofweek
+    d['dayofmonth'] = d['ds'].dt.day
+    d['dayofyear']  = d['ds'].dt.dayofyear
+    d['weekofyear'] = d['ds'].dt.isocalendar().week.astype(int)
+    d['month']      = d['ds'].dt.month
+    d['quarter']    = d['ds'].dt.quarter
+    d['year']       = d['ds'].dt.year
+    d['is_weekend'] = (d['dayofweek'] >= 5).astype(int)
+
+    # Lags
+    for lag in [1, 7, 14, 21, 28]:
+        d[f'lag_{lag}'] = d['y'].shift(lag)
+
+    # Rolling stats
+    for w in [7, 14, 28]:
+        d[f'rolling_mean_{w}'] = d['y'].shift(1).rolling(w).mean()
+        d[f'rolling_std_{w}']  = d['y'].shift(1).rolling(w).std()
+
+    return d
+
+df_feat = create_features(df_model)
+df_feat = df_feat.dropna().reset_index(drop=True)
+
+FEATURE_COLS = [
+    'dayofweek', 'dayofmonth', 'dayofyear', 'weekofyear',
+    'month', 'quarter', 'year', 'is_weekend',
+    'lag_1', 'lag_7', 'lag_14', 'lag_21', 'lag_28',
+    'rolling_mean_7', 'rolling_mean_14', 'rolling_mean_28',
+    'rolling_std_7',  'rolling_std_14',  'rolling_std_28',
+]
 
 # =========================
 # Train / Test split 80/20
 # =========================
-split_index = int(len(df_model) * 0.8)
-train_df = df_model.iloc[:split_index]
-test_df  = df_model.iloc[split_index:]
+split_index = int(len(df_feat) * 0.8)
+train_feat = df_feat.iloc[:split_index]
+test_feat  = df_feat.iloc[split_index:]
+
+X_train, y_train = train_feat[FEATURE_COLS], train_feat['y']
+X_test,  y_test  = test_feat[FEATURE_COLS],  test_feat['y']
 
 # =========================
-# Entraînement Prophet sur train
+# Entraînement XGBoost
 # =========================
 @st.cache_resource
-def train_prophet(train_df):
-    m = Prophet(
-        weekly_seasonality=True,
-        yearly_seasonality=True,
-        daily_seasonality=False,
-        changepoint_prior_scale=0.1,
-        seasonality_prior_scale=10.0
+def train_xgboost(X_train, y_train):
+    model = XGBRegressor(
+        n_estimators=500,
+        learning_rate=0.05,
+        max_depth=5,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        min_child_weight=3,
+        gamma=0.1,
+        reg_alpha=0.1,
+        reg_lambda=1.0,
+        random_state=42,
+        n_jobs=-1,
+        early_stopping_rounds=50,
+        eval_metric='rmse'
     )
-    m.fit(train_df)
-    return m
+    model.fit(
+        X_train, y_train,
+        eval_set=[(X_train, y_train), (X_test, y_test)],
+        verbose=False
+    )
+    return model
 
-with st.spinner("⏳ Entraînement Prophet..."):
-    model = train_prophet(train_df)
+with st.spinner("⏳ Entraînement XGBoost..."):
+    model = train_xgboost(X_train, y_train)
 
 # =========================
 # Prédictions sur test
 # =========================
-forecast_test = model.predict(test_df[['ds']])
-y_true = test_df['y'].values
-y_pred = forecast_test['yhat'].values
+y_pred = model.predict(X_test)
+y_true = y_test.values
+
+# Clip négatifs
+y_pred = np.clip(y_pred, 0, None)
 
 # =========================
 # Métriques
@@ -115,35 +167,59 @@ mask = y_true != 0
 mape = np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100 if mask.any() else float('nan')
 
 # =========================
-# Modèle complet pour forecast futur
+# Prévision Future (rolling forecast)
 # =========================
-@st.cache_resource
-def train_full_prophet(df_model):
-    m = Prophet(
-        weekly_seasonality=True,
-        yearly_seasonality=True,
-        daily_seasonality=False,
-        changepoint_prior_scale=0.1,
-        seasonality_prior_scale=10.0
-    )
-    m.fit(df_model)
-    return m
-
 @st.cache_data
-def make_forecast(_model, last_date):
-    future_days = 80 # ✅ prévoir seulement 3 mois (au lieu de 2026)
-    future = _model.make_future_dataframe(periods=future_days, freq='D')
-    return _model.predict(future)
+def make_future_forecast(_model, df_model, future_days=80):
+    """
+    Prévision itérative : chaque nouvelle prédiction est réinjectée
+    comme lag pour la suivante (rolling forecast).
+    """
+    history = df_model[['ds', 'y']].copy()
+    last_date = history['ds'].max()
+    future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=future_days, freq='D')
+
+    preds = []
+    for fd in future_dates:
+        tmp = pd.DataFrame({'ds': [fd], 'y': [np.nan]})
+        extended = pd.concat([history, tmp], ignore_index=True)
+        extended = create_features(extended)
+        row = extended.iloc[-1]
+
+        # Remplace les lags manquants par la dernière valeur connue
+        for col in FEATURE_COLS:
+            if pd.isna(row[col]):
+                row = row.copy()
+                row[col] = history['y'].iloc[-1]
+
+        X_future = pd.DataFrame([row[FEATURE_COLS]])
+        pred = float(_model.predict(X_future)[0])
+        pred = max(pred, 0)
+        preds.append(pred)
+
+        # Mise à jour de l'historique avec la prédiction
+        history = pd.concat([
+            history,
+            pd.DataFrame({'ds': [fd], 'y': [pred]})
+        ], ignore_index=True)
+
+    # Intervalle de confiance simplifié (±1 RMSE)
+    forecast_df = pd.DataFrame({
+        'ds':         future_dates,
+        'yhat':       preds,
+        'yhat_lower': [max(0, p - rmse) for p in preds],
+        'yhat_upper': [p + rmse for p in preds],
+    })
+    return forecast_df
 
 with st.spinner("⏳ Génération des prévisions futures..."):
-    model_full = train_full_prophet(df_model)
-    forecast   = make_forecast(model_full, df_model['ds'].max())
+    forecast_future_df = make_future_forecast(model, df_model)
 
 # =========================
 # Qualité du modèle
 # =========================
 def get_quality(r2, mape):
-    if r2 >= 0.85 and mape <= 10:
+    if r2 >= 0.90 and mape <= 10:
         return "#28a745", "🟢 Excellent"
     elif r2 >= 0.70 and mape <= 20:
         return "#ffc107", "🟡 Bon"
@@ -160,16 +236,14 @@ mape_bar = max(0.0, 100.0 - min(mape, 100.0))
 # Filtrage graphique : 2024 → 2026
 # =========================
 chart_start = pd.Timestamp("2024-01-01")
-chart_end = df_model['ds'].max() + pd.Timedelta(days=90)
+chart_end   = df_model['ds'].max() + pd.Timedelta(days=90)
 
-train_chart         = train_df[train_df['ds'] >= chart_start]
-test_chart          = test_df[(test_df['ds'] >= chart_start) & (test_df['ds'] <= chart_end)]
-forecast_test_chart = forecast_test[
-    (forecast_test['ds'] >= chart_start) & (forecast_test['ds'] <= chart_end)]
-forecast_future = forecast[
-    (forecast['ds'] > df_model['ds'].max()) &
-    (forecast['ds'] <= chart_end)
-]
+train_chart = train_feat[train_feat['ds'] >= chart_start]
+test_chart  = test_feat[(test_feat['ds'] >= chart_start) & (test_feat['ds'] <= chart_end)].copy()
+test_chart['yhat'] = model.predict(test_chart[FEATURE_COLS])
+test_chart['yhat'] = np.clip(test_chart['yhat'], 0, None)
+
+forecast_future_chart = forecast_future_df[forecast_future_df['ds'] <= chart_end]
 
 # =========================
 # TABS
@@ -198,18 +272,18 @@ with tab1:
         line=dict(color='orange', width=1.5)))
 
     fig.add_trace(go.Scatter(
-        x=forecast_test_chart['ds'], y=forecast_test_chart['yhat'],
+        x=test_chart['ds'], y=test_chart['yhat'],
         mode='lines', name='Prédiction (test)',
         line=dict(color='purple', width=1.5, dash='dash')))
 
     fig.add_trace(go.Scatter(
-        x=forecast_future['ds'], y=forecast_future['yhat'],
+        x=forecast_future_chart['ds'], y=forecast_future_chart['yhat'],
         mode='lines', name='Prévision future',
         line=dict(color='#ff7f0e', width=2)))
 
     fig.add_trace(go.Scatter(
-        x=pd.concat([forecast_future['ds'], forecast_future['ds'][::-1]]),
-        y=pd.concat([forecast_future['yhat_upper'], forecast_future['yhat_lower'][::-1]]),
+        x=pd.concat([forecast_future_chart['ds'], forecast_future_chart['ds'][::-1]]),
+        y=pd.concat([forecast_future_chart['yhat_upper'], forecast_future_chart['yhat_lower'][::-1]]),
         fill='toself', fillcolor='rgba(255,127,14,0.2)',
         line=dict(color='rgba(255,255,255,0)'),
         hoverinfo="skip", showlegend=True, name='Intervalle confiance'))
@@ -219,6 +293,7 @@ with tab1:
         xaxis=dict(range=[chart_start, chart_end]),
         template="plotly_white", hovermode="x unified", height=500,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+
     st.plotly_chart(fig, use_container_width=True)
 
 # ── Tab 2 : Performance ────────────────────────────────────────────────────────
@@ -257,20 +332,38 @@ with tab2:
         """, unsafe_allow_html=True)
 
     st.divider()
+
+    # Importance des features
+    st.markdown("### 🔍 Importance des Features")
+    importances = pd.Series(model.feature_importances_, index=FEATURE_COLS).sort_values(ascending=False)
+    fig_imp = go.Figure(go.Bar(
+        x=importances.values[:15],
+        y=importances.index[:15],
+        orientation='h',
+        marker_color='#1f77b4'
+    ))
+    fig_imp.update_layout(
+        height=400, template="plotly_white",
+        xaxis_title="Importance", yaxis_title="Feature",
+        yaxis=dict(autorange="reversed")
+    )
+    st.plotly_chart(fig_imp, use_container_width=True)
+
+    st.divider()
     if label == "🟢 Excellent":
-        st.success("✅ Prophet est très bien adapté à ce produit !")
+        st.success("✅ XGBoost est très bien adapté à ce produit !")
     elif label == "🟡 Bon":
-        st.info("ℹ️ Bonne performance. Prophet est fiable pour ce produit.")
+        st.info("ℹ️ Bonne performance. XGBoost est fiable pour ce produit.")
     elif label == "🟠 Moyen":
-        st.warning("⚠️ Performance moyenne. Essayez ARIMA ou LSTM pour de meilleurs résultats.")
+        st.warning("⚠️ Performance moyenne. Essayez LSTM ou un tuning des hyperparamètres.")
     else:
-        st.error("❌ Performance faible. Essayez ARIMA ou LSTM pour ce produit.")
+        st.error("❌ Performance faible. Essayez LSTM ou enrichissez les features.")
 
 # ── Tab 3 : Tableau de prévision ───────────────────────────────────────────────
 with tab3:
     st.subheader("Tableau de prévision (50 derniers points)")
     st.dataframe(
-        forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(50),
+        forecast_future_df[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(50),
         height=400, use_container_width=True)
 
 # ── Tab 4 : KPIs ───────────────────────────────────────────────────────────────
@@ -278,6 +371,6 @@ with tab4:
     st.subheader("KPIs Clés")
 
     kpi1, kpi2, kpi3 = st.columns(3)
-    kpi1.metric("Dernière prévision",      f"{forecast['yhat'].iloc[-1]:.2f}")
-    kpi2.metric("Moyenne prévision (30j)", f"{forecast['yhat'].iloc[-30:].mean():.2f}")
-    kpi3.metric("Max prévision",           f"{forecast['yhat'].max():.2f}")
+    kpi1.metric("Dernière prévision",      f"{forecast_future_df['yhat'].iloc[-1]:.2f}")
+    kpi2.metric("Moyenne prévision (30j)", f"{forecast_future_df['yhat'].iloc[-30:].mean():.2f}")
+    kpi3.metric("Max prévision",           f"{forecast_future_df['yhat'].max():.2f}")

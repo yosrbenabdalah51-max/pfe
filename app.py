@@ -124,24 +124,7 @@ st.session_state["product"] = selected_product
 
 st.success(f"Produit sélectionné: {selected_product}")
 
-# =========================
-# 🚀 NAVIGATION
-# =========================
-st.markdown("### 🚀 Choisir modèle de prévision")
 
-col_nav1, col_nav2, col_nav3 = st.columns(3)
-
-with col_nav1:
-    if st.button("🔵 Prophet", use_container_width=True):
-        st.switch_page("pages/Prophet.py")
-
-with col_nav2:
-    if st.button("🟢 ARIMA", use_container_width=True):
-        st.switch_page("pages/ARIMA.py")
-
-with col_nav3:
-    if st.button("🔴 LSTM", use_container_width=True):
-        st.switch_page("pages/LSTM.py")
 
 # =========================
 # KPI CARDS
