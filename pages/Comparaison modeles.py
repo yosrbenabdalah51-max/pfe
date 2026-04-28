@@ -12,8 +12,7 @@ from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from utils import get_connection, sidebar_product_selector
-
+from db_utils import get_connection, sidebar_product_selector
 warnings.filterwarnings("ignore")
 
 st.set_page_config(page_title="Comparaison Modèles", page_icon="📊", layout="wide")

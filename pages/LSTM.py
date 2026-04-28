@@ -1,7 +1,10 @@
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os
 import warnings
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
@@ -9,7 +12,7 @@ from tensorflow.keras.callbacks import EarlyStopping
 import plotly.graph_objects as go
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from utils import get_connection, sidebar_product_selector, sidebar_depot_selector
+from db_utils import get_connection, sidebar_product_selector, sidebar_depot_selector
 
 warnings.filterwarnings("ignore")
 
@@ -52,7 +55,8 @@ def load_data(ref_product, depot_id):
         """, conn, params=params if params else None)
 
         conn.close()
-        df["date_time"] = pd.to_datetime(df["date_time"])
+        df["date_time"]   = pd.to_datetime(df["date_time"])
+        df["ref_product"] = df["ref_product"].astype(int)  # cast explicite
         return df
 
     except Exception as e:
@@ -62,19 +66,13 @@ def load_data(ref_product, depot_id):
 df = load_data(product, depot_id)
 
 if df is None or len(df) == 0:
-    st.error(f"""
-    ❌ Aucune vente trouvée pour :
-    - Produit : **{product or "Tous"}**
-    - Dépôt : **{depot_sel}**
-
-    Essayez un autre produit ou dépôt.
-    """)
+    st.error(f"❌ Aucune vente trouvée pour le produit **{product or 'Tous'}** / dépôt **{depot_sel}**.")
     st.stop()
 
 # =========================
 # PRÉPARATION + LISSAGE
+# IMPORTANT : pas de @st.cache_data ici (empêche rechargement par produit)
 # =========================
-@st.cache_data
 def prepare_and_smooth(df, product, depot_id):
     df_d = (df
             .groupby(pd.Grouper(key="date_time", freq="D"))["quantity"]
@@ -83,31 +81,36 @@ def prepare_and_smooth(df, product, depot_id):
             .rename(columns={"date_time": "ds", "quantity": "y"}))
 
     df_d = df_d.set_index("ds").asfreq("D").reset_index()
-    df_d["y"] = df_d["y"].replace(0, np.nan)
-    df_d["y"] = df_d["y"].interpolate(method="linear")
-    df_d["y"] = df_d["y"].fillna(method="bfill").fillna(method="ffill")
-    df_d["y"] = df_d["y"].rolling(window=7, min_periods=1, center=True).mean()
 
+    # Zéros conservés
+    df_d["y"] = df_d["y"].fillna(0)
+
+    # Lissage adaptatif
+    n_nonzero = (df_d["y"] > 0).sum()
+    window = 7 if n_nonzero >= 60 else (3 if n_nonzero >= 20 else 1)
+    if window > 1:
+        df_d["y"] = df_d["y"].rolling(window=window, min_periods=1, center=True).mean()
+
+    # Clip outliers vers le haut uniquement
     mean_y = df_d["y"].mean()
     std_y  = df_d["y"].std()
-    df_d["y"] = df_d["y"].clip(lower=mean_y - 3 * std_y, upper=mean_y + 3 * std_y)
+    if std_y > 0:
+        df_d["y"] = df_d["y"].clip(lower=0, upper=mean_y + 3 * std_y)
 
-    df_d = df_d.dropna(subset=["y"])
-    df_d = df_d[df_d["y"] > 0].reset_index(drop=True)
+    df_d = df_d.dropna(subset=["y"]).reset_index(drop=True)
     return df_d
 
 df_model = prepare_and_smooth(df, product, depot_id)
 
-# Vérification données suffisantes
 if df_model is None or len(df_model) == 0:
     st.error("❌ Aucune donnée disponible après lissage pour ce produit/dépôt.")
     st.stop()
 
 label_produit = f"{product} / {depot_sel}" if product else f"Tous / {depot_sel}"
-st.info(f"📅 [{label_produit}] Série lissée (journalière, rolling 7j) — **{len(df_model)} points**")
+st.info(f"📅 [{label_produit}] Série lissée (journalière) — **{len(df_model)} points**")
 
-if len(df_model) < SEQ_LENGTH + 30:
-    st.warning(f"⚠️ Pas assez de données ({len(df_model)} points). Minimum requis : {SEQ_LENGTH + 30}.")
+if len(df_model) < SEQ_LENGTH + 10:
+    st.warning(f"⚠️ Pas assez de données ({len(df_model)} points). Minimum requis : {SEQ_LENGTH + 10}.")
     st.stop()
 
 # =========================
@@ -181,7 +184,7 @@ test_dates = df_model["ds"].iloc[split_index + SEQ_LENGTH:].values
 # =========================
 mae  = mean_absolute_error(y_true, y_pred)
 rmse = np.sqrt(mean_squared_error(y_true, y_pred))
-r2   = r2_score(y_true, y_pred)
+r2   = r2_score(y_true, y_pred) if len(y_true) > 1 else float('nan')
 mask = y_true != 0
 mape = np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100 if mask.any() else float("nan")
 
@@ -189,15 +192,16 @@ mape = np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100 if ma
 # FORECAST jusqu'au 31/12/2026
 # =========================
 @st.cache_data
-def make_forecast(_model, data_scaled, last_date, _scaler):
-    target       = pd.Timestamp("2026-12-31")
+def make_forecast(_model, data_scaled_tuple, last_date, _scaler):
+    data_sc  = np.array(data_scaled_tuple).reshape(-1, 1)
+    target   = pd.Timestamp("2026-12-31")
     future_steps = max(1, (target - last_date).days)
     future_dates = pd.date_range(
         start=last_date + pd.Timedelta(days=1),
         periods=future_steps, freq="D"
     )
     preds    = []
-    last_seq = data_scaled[-SEQ_LENGTH:].reshape(1, SEQ_LENGTH, 1)
+    last_seq = data_sc[-SEQ_LENGTH:].reshape(1, SEQ_LENGTH, 1)
     for _ in range(future_steps):
         p        = _model.predict(last_seq, verbose=0)[0][0]
         preds.append(p)
@@ -207,7 +211,12 @@ def make_forecast(_model, data_scaled, last_date, _scaler):
     return pd.DataFrame({"ds": future_dates, "yhat": fc_inv.flatten()})
 
 with st.spinner("⏳ Génération des prévisions futures..."):
-    forecast = make_forecast(model, data_scaled, df_model["ds"].max(), scaler)
+    forecast = make_forecast(
+        model,
+        tuple(data_scaled.flatten()),
+        df_model["ds"].max(),
+        scaler
+    )
 
 # =========================
 # AUTO-SAVE FORECAST → forecasts/
@@ -240,14 +249,18 @@ def get_quality(r2, mape):
         return "#dc3545", "🔴 Faible"
 
 color, label = get_quality(r2, mape)
-r2_pct   = max(0.0, min(r2, 1.0)) * 100
-mape_bar = max(0.0, 100.0 - min(mape, 100.0))
+r2_pct   = max(0.0, min(r2 if not np.isnan(r2) else 0, 1.0)) * 100
+mape_val = mape if not np.isnan(mape) else 100
+mape_bar = max(0.0, 100.0 - min(mape_val, 100.0))
 
 # =========================
 # FILTRAGE GRAPHIQUE 2024 → 2026
 # =========================
 chart_start = pd.Timestamp("2024-01-01")
 chart_end   = pd.Timestamp("2026-12-31")
+
+if df_model["ds"].max() < chart_start:
+    chart_start = df_model["ds"].min()
 
 train_dates       = df_model["ds"].iloc[:split_index + SEQ_LENGTH]
 train_values      = df_model["y"].iloc[:split_index + SEQ_LENGTH]
@@ -275,75 +288,74 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "📌 KPIs"
 ])
 
-# ── Tab 1 : Graphique ─────────────────────────────────────────
 with tab1:
     st.subheader(f"Historique + Prévision — {label_produit} (2024–2026)")
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=train_dates_chart, y=train_vals_chart,
-        mode="lines", name="Train",
-        line=dict(color="blue", width=1.5)
-    ))
-    fig.add_trace(go.Scatter(
-        x=test_dates_chart, y=y_true_chart,
-        mode="lines", name="Test (réel)",
-        line=dict(color="orange", width=1.5)
-    ))
-    fig.add_trace(go.Scatter(
-        x=test_dates_chart, y=y_pred_chart,
-        mode="lines", name="Prédiction (test)",
-        line=dict(color="purple", dash="dash", width=1.5)
-    ))
-    fig.add_trace(go.Scatter(
-        x=forecast_chart["ds"], y=forecast_chart["yhat"],
-        mode="lines", name="Prévision future",
-        line=dict(color="red", width=2)
-    ))
+    if len(train_dates_chart) > 0:
+        fig.add_trace(go.Scatter(
+            x=train_dates_chart, y=train_vals_chart,
+            mode="lines", name="Train",
+            line=dict(color="blue", width=1.5)))
+    if len(test_dates_chart) > 0:
+        fig.add_trace(go.Scatter(
+            x=test_dates_chart, y=y_true_chart,
+            mode="lines", name="Test (réel)",
+            line=dict(color="orange", width=1.5)))
+        fig.add_trace(go.Scatter(
+            x=test_dates_chart, y=y_pred_chart,
+            mode="lines", name="Prédiction (test)",
+            line=dict(color="purple", dash="dash", width=1.5)))
+    if not forecast_chart.empty:
+        fig.add_trace(go.Scatter(
+            x=forecast_chart["ds"], y=forecast_chart["yhat"],
+            mode="lines", name="Prévision future",
+            line=dict(color="red", width=2)))
     fig.update_layout(
         xaxis_title="Date", yaxis_title="Quantité",
         xaxis=dict(range=[chart_start, chart_end]),
-        template="plotly_white", hovermode="x unified", height=500
-    )
+        template="plotly_white", hovermode="x unified", height=500)
     st.plotly_chart(fig, use_container_width=True)
 
-# ── Tab 2 : Performance ───────────────────────────────────────
 with tab2:
     st.subheader("Indicateurs de Performance du Modèle")
 
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("MAE",  f"{mae:.2f}",   help="Erreur absolue moyenne")
-    col2.metric("RMSE", f"{rmse:.2f}",  help="Racine erreur quadratique moyenne")
-    col3.metric("MAPE", f"{mape:.2f}%", help="Erreur absolue en %")
-    col4.metric("R²",   f"{r2:.4f}",   help="Coefficient de détermination (1 = parfait)")
+    col1.metric("MAE",  f"{mae:.2f}",        help="Erreur absolue moyenne")
+    col2.metric("RMSE", f"{rmse:.2f}",        help="Racine erreur quadratique moyenne")
+    col3.metric("MAPE", f"{mape_val:.2f}%",   help="Erreur absolue en %")
+    col4.metric("R²",   f"{r2:.4f}" if not np.isnan(r2) else "N/A",
+                help="Coefficient de détermination (1 = parfait)")
 
     st.divider()
     st.markdown(f"### Qualité du modèle : {label}")
 
     col_r2, col_mape = st.columns(2)
-
     with col_r2:
         st.markdown("**R² — Coefficient de détermination**")
+        r2_label = f"{r2:.4f}" if not np.isnan(r2) else "N/A"
+        r2_text  = ('≥ 0.85 Excellent' if not np.isnan(r2) and r2 >= 0.85
+                    else '≥ 0.70 Bon'  if not np.isnan(r2) and r2 >= 0.70
+                    else '≥ 0.50 Moyen' if not np.isnan(r2) and r2 >= 0.50
+                    else '< 0.50 Faible')
         st.markdown(f"""
         <div style="background:#e0e0e0; border-radius:10px; height:22px; width:100%;">
             <div style="background:{color}; width:{r2_pct:.1f}%; height:22px; border-radius:10px;"></div>
         </div>
-        <p style="text-align:right; font-size:13px; color:gray;">
-        R² = {r2:.4f} &nbsp;|&nbsp;
-        {"≥ 0.85 Excellent" if r2 >= 0.85 else "≥ 0.70 Bon" if r2 >= 0.70 else "≥ 0.50 Moyen" if r2 >= 0.50 else "< 0.50 Faible"}
-        </p>
+        <p style="text-align:right; font-size:13px; color:gray;">R² = {r2_label} &nbsp;|&nbsp; {r2_text}</p>
         """, unsafe_allow_html=True)
 
     with col_mape:
         st.markdown("**MAPE — Erreur absolue en %**")
+        mape_text = ('≤ 10% Excellent' if mape_val <= 10
+                     else '≤ 20% Bon'  if mape_val <= 20
+                     else '≤ 50% Moyen' if mape_val <= 50
+                     else '> 50% Faible')
         st.markdown(f"""
         <div style="background:#e0e0e0; border-radius:10px; height:22px; width:100%;">
             <div style="background:{color}; width:{mape_bar:.1f}%; height:22px; border-radius:10px;"></div>
         </div>
-        <p style="text-align:right; font-size:13px; color:gray;">
-        MAPE = {mape:.2f}% &nbsp;|&nbsp;
-        {"≤ 10% Excellent" if mape <= 10 else "≤ 20% Bon" if mape <= 20 else "≤ 50% Moyen" if mape <= 50 else "> 50% Faible"}
-        </p>
+        <p style="text-align:right; font-size:13px; color:gray;">MAPE = {mape_val:.2f}% &nbsp;|&nbsp; {mape_text}</p>
         """, unsafe_allow_html=True)
 
     st.divider()
@@ -356,7 +368,6 @@ with tab2:
     else:
         st.error("❌ Performance faible. Essayez Prophet ou ARIMA pour ce produit.")
 
-# ── Tab 3 : Tableau prévisions ────────────────────────────────
 with tab3:
     st.subheader("Tableau de prévision (50 derniers points)")
     st.dataframe(forecast.tail(50), use_container_width=True)
@@ -369,7 +380,6 @@ with tab3:
         mime="text/csv"
     )
 
-# ── Tab 4 : KPIs ─────────────────────────────────────────────
 with tab4:
     st.subheader("KPIs Clés")
 
@@ -379,11 +389,7 @@ with tab4:
     kpi3.metric("Max prévision",           f"{forecast['yhat'].max():.2f}")
 
     st.divider()
-    st.markdown(f"""
-    **📁 Fichier sauvegardé :** `{save_path}`
-
-    Ce fichier est automatiquement lu par la page **📦 Stock Management**.
-    """)
+    st.markdown(f"**📁 Fichier sauvegardé :** `{save_path}`")
 
     if st.button("➡️ Aller à Stock Management", use_container_width=True):
         st.switch_page("pages/Stock_Management.py")
