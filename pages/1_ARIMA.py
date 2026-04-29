@@ -9,49 +9,18 @@ from statsmodels.tsa.arima.model import ARIMA
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import numpy as np
 import warnings
-from db_utils import get_connection, sidebar_product_selector, sidebar_depot_selector
+from utils import get_connection, sidebar_filters
 
 warnings.filterwarnings("ignore")
 
 st.set_page_config(page_title="Prévision ARIMA", page_icon="🟢")
 st.title("📈 Dashboard Prévision des Ventes - ARIMA")
 
-# =========================
-# Sidebar — Produit + Dépôt
-# =========================
-product = sidebar_product_selector()
-depot_id, depot_sel, zone_name = sidebar_depot_selector(product)
-st.sidebar.caption(f"Produit: {product or 'Tous'} | Dépôt: {depot_sel}")
 
 # =========================
-# Load Data
+# SIDEBAR + FILTRES — via utils.sidebar_filters()
 # =========================
-@st.cache_data(ttl=300)
-def load_data(ref_product, depot_id):
-    try:
-        conn = get_connection()
-        conditions = []
-        params = {}
-        if ref_product is not None:
-            conditions.append("ref_product = %(ref)s")
-            params["ref"] = int(ref_product)
-        if depot_id is not None and depot_id != "all":
-            conditions.append("depot_id = %(depot)s")
-            params["depot"] = int(depot_id)
-        where = "WHERE " + " AND ".join(conditions) if conditions else ""
-        df = pd.read_sql(f"""
-            SELECT ref_product, quantity, date_time, depot_id
-            FROM sales {where}
-        """, conn, params=params if params else None)
-        conn.close()
-        df['date_time']   = pd.to_datetime(df['date_time'])
-        df['ref_product'] = df['ref_product'].astype(int)
-        return df
-    except Exception as e:
-        st.error(f"⚠️ Erreur de connexion : {e}")
-        st.stop()
-
-df = load_data(product, depot_id)
+df, product, depot_id, depot_sel, date_range, selected_country = sidebar_filters()
 
 if df is None or len(df) == 0:
     st.error(f"❌ Aucune vente trouvée pour le produit **{product or 'Tous'}** / dépôt **{depot_sel}**.")

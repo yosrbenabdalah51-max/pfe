@@ -12,58 +12,50 @@ from tensorflow.keras.callbacks import EarlyStopping
 import plotly.graph_objects as go
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from db_utils import get_connection, sidebar_product_selector, sidebar_depot_selector
+from utils import get_connection, sidebar_filters
 
 warnings.filterwarnings("ignore")
 
 st.set_page_config(page_title="LSTM", page_icon="🔴")
 st.title("📈 Prévision avec LSTM")
 
-# =========================
-# SIDEBAR — Produit + Dépôt
-# =========================
-product = sidebar_product_selector()
-depot_id, depot_sel, zone_name = sidebar_depot_selector(product)
-st.sidebar.caption(f"Produit: {product or 'Tous'} | Dépôt: {depot_sel}")
+EXCLUDED_DEPOT_IDS = {8, 41, 57}
 
 SEQ_LENGTH = 30
 
 # =========================
-# CHARGEMENT — filtré par produit + dépôt
+# CHARGEMENT COMPLET (comme app)
 # =========================
 @st.cache_data(ttl=300)
-def load_data(ref_product, depot_id):
+def load_data():
     try:
         conn = get_connection()
-        conditions = []
-        params     = {}
-
-        if ref_product is not None:
-            conditions.append("ref_product = %(ref)s")
-            params["ref"] = int(ref_product)
-
-        if depot_id is not None and depot_id != "all":
-            conditions.append("depot_id = %(depot)s")
-            params["depot"] = int(depot_id)
-
-        where = "WHERE " + " AND ".join(conditions) if conditions else ""
-
+        excluded = ",".join(str(i) for i in EXCLUDED_DEPOT_IDS)
         df = pd.read_sql(f"""
-            SELECT ref_product, quantity, date_time, depot_id
-            FROM sales
-            {where}
-        """, conn, params=params if params else None)
-
+            SELECT s.ref_product, s.quantity, s.price, s.date_time,
+                   s.depot_id,
+                   d.name       AS depot_name,
+                   c.name       AS country_name
+            FROM sales s
+            LEFT JOIN depot   d ON s.depot_id   = d.depot_id
+            LEFT JOIN country c ON d.country_id = c.id
+            WHERE s.depot_id NOT IN ({excluded})
+        """, conn)
         conn.close()
         df["date_time"]   = pd.to_datetime(df["date_time"])
-        df["ref_product"] = df["ref_product"].astype(int)  # cast explicite
+        df["ref_product"] = df["ref_product"].astype(int)
+        df["total"]       = df["quantity"] * df["price"]
         return df
-
     except Exception as e:
         st.error(f"⚠️ Erreur de connexion : {e}")
         st.stop()
 
-df = load_data(product, depot_id)
+df_full = load_data()
+
+# =========================
+# SIDEBAR + FILTRES — via utils.sidebar_filters()
+# =========================
+df, product, depot_id, depot_sel, date_range, selected_country = sidebar_filters()
 
 if df is None or len(df) == 0:
     st.error(f"❌ Aucune vente trouvée pour le produit **{product or 'Tous'}** / dépôt **{depot_sel}**.")
@@ -394,10 +386,9 @@ with tab4:
     if st.button("➡️ Aller à Stock Management", use_container_width=True):
         st.switch_page("pages/Stock_Management.py")
 
-        # =========================
+# =========================
 # ✅ SAUVEGARDE SESSION_STATE pour la page Comparaison
 # =========================
-# Calcul freq_label (même logique que XGBoost)
 freq_label = "hebdomadaire" if len(df_model) < 60 else "journalière"
 
 sess_key = f"lstm_{product}_{depot_id}"

@@ -4,81 +4,65 @@ import mysql.connector
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from db_utils import get_connection
+from utils import get_connection
 
 st.set_page_config(page_title="Vision Analytics", page_icon="📊", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
-/* Sidebar auto-expand on hover */
-[data-testid="stSidebar"] {
-    transition: width 0.3s ease !important;
-}
-[data-testid="collapsedControl"] {
-    display: none !important;
-}
+[data-testid="stSidebar"] { transition: width 0.3s ease !important; }
+[data-testid="collapsedControl"] { display: none !important; }
 section[data-testid="stSidebar"][aria-expanded="false"] {
-    width: 0px !important;
-    min-width: 0px !important;
-    overflow: hidden;
+    width: 0px !important; min-width: 0px !important; overflow: hidden;
 }
 section[data-testid="stSidebar"][aria-expanded="false"]:hover {
-    width: 350px !important;
-    min-width: 350px !important;
-    overflow: visible;
-    box-shadow: 4px 0 20px rgba(0,0,0,0.15);
+    width: 350px !important; min-width: 350px !important;
+    overflow: visible; box-shadow: 4px 0 20px rgba(0,0,0,0.15);
 }
-
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 * { font-family: 'Plus Jakarta Sans', sans-serif; }
-
 .metric-card {
-    background-color: #ffffff;
-    padding: 20px;
-    border-radius: 15px;
-    box-shadow: 0px 4px 15px rgba(0,0,0,0.1);
-    text-align: center;
+    background-color: #ffffff; padding: 20px; border-radius: 15px;
+    box-shadow: 0px 4px 15px rgba(0,0,0,0.1); text-align: center;
 }
 .metric-title { font-size: 14px; color: gray; }
 .metric-value { font-size: 28px; font-weight: bold; }
 .big-title    { font-size: 28px; font-weight: bold; }
-
 .kpi-row {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 12px;
-    margin: 18px 0 24px 0;
+    display: grid; grid-template-columns: repeat(5, 1fr);
+    gap: 12px; margin: 18px 0 24px 0;
 }
 .kpi-card {
-    background: #ffffff;
-    border-radius: 14px;
-    padding: 16px 14px;
+    background: #ffffff; border-radius: 14px; padding: 16px 14px;
     box-shadow: 0 2px 12px rgba(108,99,255,0.1);
-    border-top: 3px solid #6c63ff;
-    text-align: center;
+    border-top: 3px solid #6c63ff; text-align: center;
 }
 .kpi-icon  { font-size: 22px; margin-bottom: 6px; }
 .kpi-label { font-size: 10px; font-weight: 600; color: #9ca3af;
              text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; }
 .kpi-value { font-size: 16px; font-weight: 800; color: #1a1a2e; line-height: 1.2; }
-
 .dash-section {
     font-size: 15px; font-weight: 700; color: #1a1a2e;
-    margin: 22px 0 10px 0;
-    padding-left: 10px;
+    margin: 22px 0 10px 0; padding-left: 10px;
     border-left: 4px solid #6c63ff;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
-# LOAD DATA
+# Dépôts exclus — même liste que utils
+# =========================
+EXCLUDED_DEPOT_IDS = {8, 41, 57}
+
+# =========================
+# LOAD DATA — exclut les dépôts blacklistés
 # =========================
 @st.cache_data
 def load_data():
     try:
         conn = get_connection()
-        df = pd.read_sql("""
+        excluded = ",".join(str(i) for i in EXCLUDED_DEPOT_IDS)
+        df = pd.read_sql(f"""
             SELECT s.id, s.order_id, s.ref_product, s.is_pack,
                    s.quantity, s.price, s.depot_id, s.date_time,
                    d.name        AS depot_name,
@@ -91,7 +75,8 @@ def load_data():
             LEFT JOIN depot    d   ON s.depot_id        = d.depot_id
             LEFT JOIN country  c   ON d.country_id      = c.id
             LEFT JOIN product  p   ON s.ref_product     = p.ref_product
-            LEFT JOIN category  cat ON p.sub_category_id = cat.sub_category_id
+            LEFT JOIN category cat ON p.sub_category_id = cat.sub_category_id
+            WHERE s.depot_id NOT IN ({excluded})
         """, conn)
         conn.close()
         df['date_time']   = pd.to_datetime(df['date_time'])
@@ -115,8 +100,9 @@ date_range = st.sidebar.date_input("Date", [df['date_time'].min(), df['date_time
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🎯 Produit")
-product_rank_sb = (df.groupby('ref_product')['total'].sum()
-                   .reset_index().sort_values('total', ascending=False))
+product_rank_sb = (df.groupby('ref_product')['total']
+                   .sum().reset_index()
+                   .sort_values('total', ascending=False))
 product_rank_sb["label"] = product_rank_sb.apply(
     lambda x: f"{x['ref_product']}  (💰 {int(x['total']):,})", axis=1).astype(str)
 
@@ -139,10 +125,12 @@ if selected_country == "🌐 Tous les pays":
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🏭 Dépôt")
+# Filtre les dépôts selon le pays sélectionné — les exclus sont déjà absents du df
 if selected_country:
     depot_list = df[df['country_name'] == selected_country]['depot_name'].dropna().unique().tolist()
 else:
     depot_list = df['depot_name'].dropna().unique().tolist()
+
 depot_options = ["🏭 Tous les dépôts"] + sorted(depot_list)
 selected_depot = st.sidebar.selectbox("Choisir un dépôt", depot_options)
 if selected_depot == "🏭 Tous les dépôts":
@@ -169,7 +157,7 @@ if df_f.empty:
     st.stop()
 
 # =========================
-# TITLE + KPIs originaux
+# TITLE + KPIs
 # =========================
 st.markdown('<p class="big-title">📊 Vision Analytics Dashboard</p>', unsafe_allow_html=True)
 if selected_product:
@@ -199,7 +187,6 @@ card(col4, "AVERAGE SALE",   f"{avg_sale:,.2f}")
 # =========================
 tab1, tab2 = st.tabs(["🏠 Vue Globale", "📊 Dashboard Analytique"])
 
-# ── TAB 1 original ────────────────────────
 with tab1:
     product_rank = df_f.groupby('ref_product')['total'].sum().reset_index()
     product_rank = product_rank.sort_values('total', ascending=False)
@@ -224,13 +211,10 @@ with tab1:
         fig3 = px.pie(top_products, names='ref_product', values='total')
         st.plotly_chart(fig3, use_container_width=True)
 
-# ── TAB 2 Dashboard Analytique ────────────
 with tab2:
-
     COLORS = ['#6c63ff','#a78bfa','#f59e0b','#10b981','#f43f5e','#3b82f6','#8b5cf6']
     TW = dict(template="plotly_white", margin=dict(l=0,r=0,t=10,b=0))
 
-    # ── INSIGHTS ──────────────────────────────
     nb_cmd       = df_f['order_id'].nunique()
     best_country = df_f.groupby('country_name')['total'].sum().idxmax()
     best_product = df_f.groupby('ref_product')['total'].sum().idxmax()
@@ -253,7 +237,6 @@ with tab2:
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Chart 1 : CA + Qté par mois ───────────
     st.markdown('<div class="dash-section">📈 Évolution CA & Quantités par mois</div>', unsafe_allow_html=True)
     df_monthly = df_f.groupby('month').agg(total=('total','sum'), quantity=('quantity','sum')).reset_index()
     fig_evo = make_subplots(specs=[[{"secondary_y": True}]])
@@ -268,9 +251,7 @@ with tab2:
     fig_evo.update_yaxes(title_text="Qté", secondary_y=True)
     st.plotly_chart(fig_evo, use_container_width=True)
 
-    # ── Chart 2 : Qté par produit + CA par pays ──
     c1, c2 = st.columns(2)
-
     with c1:
         st.markdown('<div class="dash-section">📦 Quantité vendue par produit (Top 15)</div>', unsafe_allow_html=True)
         df_pq = (df_f.groupby('ref_product')['quantity']
@@ -301,17 +282,14 @@ with tab2:
             legend=dict(orientation='h', y=1.05, x=0), bargap=0.3)
         st.plotly_chart(fig_pays, use_container_width=True)
 
-    # ── Chart 3 : Produit (x) × Dépôt (couleur) ── axe x = produit, représenté en radar par dépôt
     st.markdown('<div class="dash-section">🏭 Quantité par produit et dépôt — Vue Radar par dépôt</div>', unsafe_allow_html=True)
-
     top10_prod = (df_f.groupby('ref_product')['quantity']
                   .sum().nlargest(10).index.tolist())
     df_dp = (df_f[df_f['ref_product'].isin(top10_prod)]
              .groupby(['depot_name','ref_product'])['quantity']
              .sum().reset_index())
     df_dp['ref_product'] = df_dp['ref_product'].astype(str)
-
-    depots = df_dp['depot_name'].unique().tolist()
+    depots   = df_dp['depot_name'].unique().tolist()
     produits = df_dp['ref_product'].unique().tolist()
 
     fig_radar = go.Figure()
@@ -324,7 +302,6 @@ with tab2:
             r=vals_closed, theta=cats_closed,
             fill='toself', name=depot,
             line=dict(color=COLORS[i % len(COLORS)], width=2),
-            fillcolor=COLORS[i % len(COLORS)].replace('#','rgba(').replace('ff','ff,0.12)') if False else COLORS[i % len(COLORS)],
             opacity=0.7
         ))
     fig_radar.update_layout(
@@ -338,9 +315,7 @@ with tab2:
     )
     st.plotly_chart(fig_radar, use_container_width=True)
 
-    # ── Chart 4 : Pack vs Standard + Treemap ──────────────────
     c3, c4 = st.columns([1, 2])
-
     with c3:
         st.markdown('<div class="dash-section">📦 Pack vs Standard</div>', unsafe_allow_html=True)
         df_pack = df_f.copy()
@@ -348,13 +323,10 @@ with tab2:
         df_pack_agg = df_pack.groupby('type').agg(
             ca=('total','sum'), qty=('quantity','sum')
         ).reset_index()
-
         fig_pack = go.Figure()
         fig_pack.add_trace(go.Pie(
-            labels=df_pack_agg['type'],
-            values=df_pack_agg['ca'],
-            hole=0.55,
-            marker=dict(colors=['#6c63ff','#f59e0b']),
+            labels=df_pack_agg['type'], values=df_pack_agg['ca'],
+            hole=0.55, marker=dict(colors=['#6c63ff','#f59e0b']),
             textinfo='label+percent',
             textfont=dict(size=13, family='Plus Jakarta Sans'),
             hovertemplate="<b>%{label}</b><br>CA: %{value:,.0f}<br>Part: %{percent}<extra></extra>"
@@ -371,15 +343,12 @@ with tab2:
         df_tree_agg = (df_tree.groupby(['category_name','sub_category_name'])
                        .agg(ca=('total','sum'), qty=('quantity','sum'))
                        .reset_index())
-
         fig_tree = px.treemap(
             df_tree_agg,
             path=['category_name', 'sub_category_name'],
-            values='ca',
-            color='ca',
+            values='ca', color='ca',
             color_continuous_scale=['#ede9fe','#6c63ff','#4c1d95'],
-            custom_data=['qty'],
-            hover_data={'ca': True}
+            custom_data=['qty'], hover_data={'ca': True}
         )
         fig_tree.update_traces(
             texttemplate="<b>%{label}</b><br>CA: %{value:,.0f}",
