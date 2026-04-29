@@ -6,10 +6,29 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from db_utils import get_connection
 
-st.set_page_config(page_title="Vision Analytics", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Vision Analytics", page_icon="📊", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
+/* Sidebar auto-expand on hover */
+[data-testid="stSidebar"] {
+    transition: width 0.3s ease !important;
+}
+[data-testid="collapsedControl"] {
+    display: none !important;
+}
+section[data-testid="stSidebar"][aria-expanded="false"] {
+    width: 0px !important;
+    min-width: 0px !important;
+    overflow: hidden;
+}
+section[data-testid="stSidebar"][aria-expanded="false"]:hover {
+    width: 350px !important;
+    min-width: 350px !important;
+    overflow: visible;
+    box-shadow: 4px 0 20px rgba(0,0,0,0.15);
+}
+
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 * { font-family: 'Plus Jakarta Sans', sans-serif; }
 

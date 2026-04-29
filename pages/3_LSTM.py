@@ -393,3 +393,23 @@ with tab4:
 
     if st.button("➡️ Aller à Stock Management", use_container_width=True):
         st.switch_page("pages/Stock_Management.py")
+
+        # =========================
+# ✅ SAUVEGARDE SESSION_STATE pour la page Comparaison
+# =========================
+# Calcul freq_label (même logique que XGBoost)
+freq_label = "hebdomadaire" if len(df_model) < 60 else "journalière"
+
+sess_key = f"lstm_{product}_{depot_id}"
+st.session_state[sess_key] = {
+    "MAE":       mae,
+    "RMSE":      rmse,
+    "MAPE":      mape,
+    "R2":        r2,
+    "quality":   label,
+    "future":    forecast[['ds', 'yhat']].copy(),
+    "product":   product,
+    "depot_id":  depot_id,
+    "depot_sel": depot_sel,
+    "freq":      freq_label,
+}

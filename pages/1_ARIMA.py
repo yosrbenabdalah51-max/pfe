@@ -24,7 +24,7 @@ depot_id, depot_sel, zone_name = sidebar_depot_selector(product)
 st.sidebar.caption(f"Produit: {product or 'Tous'} | Dépôt: {depot_sel}")
 
 # =========================
-# Load Data (filtré par produit + dépôt côté SQL)
+# Load Data
 # =========================
 @st.cache_data(ttl=300)
 def load_data(ref_product, depot_id):
@@ -32,23 +32,17 @@ def load_data(ref_product, depot_id):
         conn = get_connection()
         conditions = []
         params = {}
-
         if ref_product is not None:
             conditions.append("ref_product = %(ref)s")
             params["ref"] = int(ref_product)
-
         if depot_id is not None and depot_id != "all":
             conditions.append("depot_id = %(depot)s")
             params["depot"] = int(depot_id)
-
         where = "WHERE " + " AND ".join(conditions) if conditions else ""
-
         df = pd.read_sql(f"""
             SELECT ref_product, quantity, date_time, depot_id
-            FROM sales
-            {where}
+            FROM sales {where}
         """, conn, params=params if params else None)
-
         conn.close()
         df['date_time']   = pd.to_datetime(df['date_time'])
         df['ref_product'] = df['ref_product'].astype(int)
@@ -64,30 +58,22 @@ if df is None or len(df) == 0:
     st.stop()
 
 # =========================
-# Préparation + Lissage adaptatif
+# Préparation + Lissage
 # =========================
 def prepare_and_smooth(df):
-    df_d = (df
-            .groupby(pd.Grouper(key='date_time', freq='D'))['quantity']
-            .sum()
-            .reset_index()
+    df_d = (df.groupby(pd.Grouper(key='date_time', freq='D'))['quantity']
+            .sum().reset_index()
             .rename(columns={'date_time': 'ds', 'quantity': 'y'}))
-
     df_d = df_d.set_index('ds').asfreq('D').reset_index()
     df_d['y'] = df_d['y'].fillna(0)
-
     n_nonzero = (df_d['y'] > 0).sum()
     window = 7 if n_nonzero >= 60 else (3 if n_nonzero >= 20 else 1)
     if window > 1:
         df_d['y'] = df_d['y'].rolling(window=window, min_periods=1, center=True).mean()
-
-    mean_y = df_d['y'].mean()
-    std_y  = df_d['y'].std()
+    mean_y, std_y = df_d['y'].mean(), df_d['y'].std()
     if std_y > 0:
         df_d['y'] = df_d['y'].clip(lower=0, upper=mean_y + 3 * std_y)
-
-    df_d = df_d.dropna(subset=['y']).reset_index(drop=True)
-    return df_d
+    return df_d.dropna(subset=['y']).reset_index(drop=True)
 
 df_model = prepare_and_smooth(df)
 
@@ -95,23 +81,13 @@ label_produit = f"{product or 'Tous'} / {depot_sel}"
 n_pts = len(df_model)
 st.info(f"📅 [{label_produit}] Série lissée (journalière) — **{n_pts} points**")
 
-# =========================
-# Seuil minimum
-# =========================
 MIN_POINTS = 10
 if n_pts < MIN_POINTS:
     st.warning(f"⚠️ Seulement {n_pts} points disponibles (minimum requis : {MIN_POINTS}).")
     st.stop()
 
-# =========================
-# Agrégation hebdomadaire si moins de 60 points
-# =========================
 if n_pts < 60:
-    df_model = (df_model
-                .set_index('ds')
-                .resample('W')['y']
-                .sum()
-                .reset_index())
+    df_model = df_model.set_index('ds').resample('W')['y'].sum().reset_index()
     df_model = df_model.reset_index(drop=True)
     st.info(f"🔁 Données agrégées par semaine ({len(df_model)} semaines)")
     freq_label = "hebdomadaire"
@@ -123,38 +99,28 @@ if n_pts < MIN_POINTS:
     st.warning(f"⚠️ Pas assez de données même après agrégation ({n_pts} points).")
     st.stop()
 
-# =========================
-# Train / Test split 80/20
-# =========================
 split_index = max(1, int(n_pts * 0.8))
 train_df = df_model.iloc[:split_index]
 test_df  = df_model.iloc[split_index:]
-
 if len(test_df) == 0:
     train_df = df_model.iloc[:-1]
     test_df  = df_model.iloc[-1:]
 
 # =========================
-# Recherche automatique du meilleur ordre ARIMA (AIC)
+# Meilleur ordre ARIMA
 # =========================
 @st.cache_data
 def find_best_arima_order(train_y_tuple, small=False):
     train_y = list(train_y_tuple)
-    best_aic   = np.inf
-    best_order = (1, 1, 1)
-    p_range = range(0, 3) if small else range(0, 4)
-    d_range = range(0, 2)
-    q_range = range(0, 2) if small else range(0, 3)
-    for p in p_range:
-        for d in d_range:
-            for q in q_range:
+    best_aic, best_order = np.inf, (1, 1, 1)
+    for p in range(0, 3 if small else 4):
+        for d in range(0, 2):
+            for q in range(0, 2 if small else 3):
                 try:
                     m = ARIMA(train_y, order=(p, d, q)).fit()
                     if m.aic < best_aic:
-                        best_aic   = m.aic
-                        best_order = (p, d, q)
-                except Exception:
-                    continue
+                        best_aic, best_order = m.aic, (p, d, q)
+                except: continue
     return best_order
 
 is_small = n_pts < 60
@@ -188,7 +154,7 @@ mask = y_true != 0
 mape = np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100 if mask.any() else float('nan')
 
 # =========================
-# Forecast complet jusqu'au 31/12/2026
+# Forecast jusqu'au 31/12/2026
 # =========================
 @st.cache_data
 def make_full_forecast(full_y_tuple, order, last_date, freq_label):
@@ -196,32 +162,22 @@ def make_full_forecast(full_y_tuple, order, last_date, freq_label):
     target       = pd.Timestamp("2026-12-31")
     freq         = 'W' if freq_label == "hebdomadaire" else 'D'
     future_steps = max(1, (target - last_date).days // (7 if freq == 'W' else 1))
-    future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1),
-                                 periods=future_steps, freq=freq)
+    future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=future_steps, freq=freq)
     fc     = model_full.forecast(steps=future_steps)
     fc_arr = np.array(fc.values if hasattr(fc, 'values') else fc)
     return pd.DataFrame({'ds': future_dates, 'yhat': fc_arr})
 
 with st.spinner("⏳ Génération des prévisions futures..."):
-    forecast = make_full_forecast(
-        tuple(df_model['y'].values),
-        best_order,
-        df_model['ds'].max(),
-        freq_label
-    )
+    forecast = make_full_forecast(tuple(df_model['y'].values), best_order, df_model['ds'].max(), freq_label)
 
 # =========================
 # Qualité du modèle
 # =========================
 def get_quality(r2, mape):
-    if r2 >= 0.85 and mape <= 10:
-        return "#28a745", "🟢 Excellent"
-    elif r2 >= 0.70 and mape <= 20:
-        return "#ffc107", "🟡 Bon"
-    elif r2 >= 0.50 and mape <= 50:
-        return "#fd7e14", "🟠 Moyen"
-    else:
-        return "#dc3545", "🔴 Faible"
+    if r2 >= 0.85 and mape <= 10:   return "#28a745", "🟢 Excellent"
+    elif r2 >= 0.70 and mape <= 20: return "#ffc107", "🟡 Bon"
+    elif r2 >= 0.50 and mape <= 50: return "#fd7e14", "🟠 Moyen"
+    else:                           return "#dc3545", "🔴 Faible"
 
 color, label = get_quality(r2, mape)
 r2_pct   = max(0.0, min(r2 if not np.isnan(r2) else 0, 1.0)) * 100
@@ -233,7 +189,6 @@ mape_bar = max(0.0, 100.0 - min(mape_val, 100.0))
 # =========================
 chart_start = pd.Timestamp("2024-01-01")
 chart_end   = pd.Timestamp("2026-12-31")
-
 if df_model['ds'].max() < chart_start:
     chart_start = df_model['ds'].min()
 
@@ -246,9 +201,7 @@ forecast_chart   = forecast[(forecast['ds'] >= chart_start) & (forecast['ds'] <=
 # =========================
 # TABS
 # =========================
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📈 Graphique", "📊 Performance", "📋 Prévisions", "📌 KPIs"
-])
+tab1, tab2, tab3, tab4 = st.tabs(["📈 Graphique", "📊 Performance", "📋 Prévisions", "📌 KPIs"])
 
 with tab1:
     st.subheader(f"Historique + Prévision — {label_produit} ({freq_label})")
@@ -273,11 +226,10 @@ with tab1:
 with tab2:
     st.subheader("Indicateurs de Performance du Modèle")
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("MAE",  f"{mae:.2f}",        help="Erreur absolue moyenne")
-    col2.metric("RMSE", f"{rmse:.2f}",        help="Racine erreur quadratique moyenne")
-    col3.metric("MAPE", f"{mape_val:.2f}%",   help="Erreur absolue en %")
-    col4.metric("R²",   f"{r2:.4f}" if not np.isnan(r2) else "N/A",
-                help="Coefficient de détermination (1 = parfait)")
+    col1.metric("MAE",  f"{mae:.2f}")
+    col2.metric("RMSE", f"{rmse:.2f}")
+    col3.metric("MAPE", f"{mape_val:.2f}%")
+    col4.metric("R²",   f"{r2:.4f}" if not np.isnan(r2) else "N/A")
     st.divider()
     st.markdown(f"### Qualité du modèle : {label}")
     col_r2, col_mape = st.columns(2)
@@ -307,18 +259,16 @@ with tab2:
         <p style="text-align:right; font-size:13px; color:gray;">MAPE = {mape_val:.2f}% &nbsp;|&nbsp; {mape_text}</p>
         """, unsafe_allow_html=True)
     st.divider()
-    if label == "🟢 Excellent":
-        st.success("✅ ARIMA est très bien adapté à ce produit !")
-    elif label == "🟡 Bon":
-        st.info("ℹ️ Bonne performance. ARIMA est fiable pour ce produit.")
-    elif label == "🟠 Moyen":
-        st.warning("⚠️ Performance moyenne. Essayez Prophet ou LSTM.")
-    else:
-        st.error("❌ Performance faible. Essayez Prophet ou LSTM pour ce produit.")
+    if label == "🟢 Excellent":   st.success("✅ ARIMA est très bien adapté à ce produit !")
+    elif label == "🟡 Bon":       st.info("ℹ️ Bonne performance. ARIMA est fiable pour ce produit.")
+    elif label == "🟠 Moyen":     st.warning("⚠️ Performance moyenne. Essayez Prophet ou LSTM.")
+    else:                          st.error("❌ Performance faible. Essayez Prophet ou LSTM pour ce produit.")
 
 with tab3:
     st.subheader("Tableau de prévision (50 derniers points)")
     st.dataframe(forecast.tail(50), use_container_width=True)
+    csv = forecast.to_csv(index=False).encode('utf-8')
+st.download_button("📥 Exporter CSV", data=csv, file_name="previsions_arima.csv", mime="text/csv")
 
 with tab4:
     st.subheader("KPIs Clés")
@@ -326,3 +276,21 @@ with tab4:
     kpi1.metric("Dernière prévision",      f"{forecast['yhat'].iloc[-1]:.2f}")
     kpi2.metric("Moyenne prévision (30j)", f"{forecast['yhat'].iloc[-30:].mean():.2f}")
     kpi3.metric("Max prévision",           f"{forecast['yhat'].max():.2f}")
+
+# =========================
+# ✅ SAUVEGARDE SESSION_STATE pour la page Comparaison
+# =========================
+sess_key = f"arima_{product}_{depot_id}"
+st.session_state[sess_key] = {
+    "MAE":      mae,
+    "RMSE":     rmse,
+    "MAPE":     mape,
+    "R2":       r2,
+    "quality":  label,
+    "future":   forecast[['ds', 'yhat']].copy(),
+    "product":  product,
+    "depot_id": depot_id,
+    "depot_sel": depot_sel,
+    
+    "freq": freq_label,  # "journalière" ou "hebdomadaire"
+}
