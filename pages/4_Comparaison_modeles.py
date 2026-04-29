@@ -7,8 +7,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import warnings
-from db_utils import get_connection, sidebar_product_selector, sidebar_depot_selector
-
+from utils import get_connection, sidebar_filters
 warnings.filterwarnings("ignore")
 
 st.set_page_config(page_title="Comparaison Modèles", page_icon="📊", layout="wide")
@@ -62,24 +61,15 @@ st.markdown(
 )
 
 # =========================
-# Sidebar
+# SIDEBAR + FILTRES — via utils.sidebar_filters()
 # =========================
-product = sidebar_product_selector()
+df, product, depot_id, depot_sel, date_range, selected_country = sidebar_filters()
 
-if product is None:
-    st.markdown("""
-    <div class="warn-box">
-        ⚠️ Veuillez sélectionner un produit spécifique dans la sidebar.<br>
-        <span style="font-weight:400; font-size:13px;">
-        La comparaison nécessite un produit précis pour être pertinente.
-        </span>
-    </div>
-    """, unsafe_allow_html=True)
+label_produit = str(product) if product is not None else "Tous"
+
+if df is None or len(df) == 0:
+    st.error(f"❌ Aucune vente trouvée pour le produit **{label_produit}** / dépôt **{depot_sel}**.")
     st.stop()
-
-depot_id, depot_sel, zone_name = sidebar_depot_selector(product)
-st.sidebar.caption(f"Produit: {product} | Dépôt: {depot_sel}")
-label_produit = f"{product} / {depot_sel}"
 
 # =========================
 # Lecture session_state
