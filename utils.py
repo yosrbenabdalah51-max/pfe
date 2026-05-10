@@ -7,10 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # =========================
-# Dépôts exclus du sidebar (toutes les pages sauf Stock Management)
-# 8  = Depot Transporteur France
-# 41 = Depot Export Athens
-# 57 = Depot Berlin
+# Dépôts exclus
 # =========================
 EXCLUDED_DEPOT_IDS = {8, 41, 57}
 
@@ -35,20 +32,26 @@ def get_data(query):
     return data
 
 # =========================
-# Sidebar — Sélecteur produit
+# Chargement noms produits depuis la BD
+# =========================
+@st.cache_data(ttl=3600)
+def load_product_names():
+    """Retourne un dict {ref_product (int): name (str)} depuis la table product."""
+    conn = get_connection()
+    df = pd.read_sql("SELECT ref_product, name FROM product", conn)
+    conn.close()
+    df["ref_product"] = df["ref_product"].astype(int)
+    return dict(zip(df["ref_product"], df["name"]))
+
+# =========================
+# Chargement données ventes
 # =========================
 @st.cache_data(ttl=600)
 def load_product_ranking():
-    """
-    Agrégation faite côté SQL, pas en Python.
-    Exclut les ventes des dépôts blacklistés.
-    """
     conn = get_connection()
     excluded = ",".join(str(i) for i in EXCLUDED_DEPOT_IDS)
     df = pd.read_sql(f"""
-        SELECT
-            ref_product,
-            SUM(quantity * price) AS total
+        SELECT ref_product, SUM(quantity * price) AS total
         FROM sales
         WHERE depot_id NOT IN ({excluded})
         GROUP BY ref_product
@@ -60,15 +63,9 @@ def load_product_ranking():
 
 @st.cache_data(ttl=600)
 def load_depots_for_product(ref_product):
-    """
-    Charge les dépôts disponibles pour un produit donné.
-    Exclut automatiquement les dépôts 8, 41 et 57.
-    """
     conn = get_connection()
     excluded = ",".join(str(i) for i in EXCLUDED_DEPOT_IDS)
-
     if ref_product is None:
-        # Tous les produits → tous les dépôts (hors exclus)
         df = pd.read_sql(f"""
             SELECT DISTINCT d.depot_id, d.name AS depot_name, c.name AS zone
             FROM depot d
@@ -77,7 +74,6 @@ def load_depots_for_product(ref_product):
             ORDER BY d.name
         """, conn)
     else:
-        # Dépôts ayant vendu ce produit (hors exclus)
         df = pd.read_sql(f"""
             SELECT DISTINCT d.depot_id, d.name AS depot_name, c.name AS zone
             FROM sales s
@@ -93,17 +89,13 @@ def load_depots_for_product(ref_product):
 
 @st.cache_data(ttl=300)
 def load_full_data():
-    """
-    Charge toutes les ventes avec depot_name et country_name.
-    Exclut les dépôts blacklistés.
-    """
     conn = get_connection()
     excluded = ",".join(str(i) for i in EXCLUDED_DEPOT_IDS)
     df = pd.read_sql(f"""
         SELECT s.ref_product, s.quantity, s.price, s.date_time,
                s.depot_id,
-               d.name       AS depot_name,
-               c.name       AS country_name
+               d.name  AS depot_name,
+               c.name  AS country_name
         FROM sales s
         LEFT JOIN depot   d ON s.depot_id   = d.depot_id
         LEFT JOIN country c ON d.country_id = c.id
@@ -116,18 +108,16 @@ def load_full_data():
     return df
 
 
+# =========================
+# Sidebar unifié
+# =========================
 def sidebar_filters():
     """
-    Sidebar unifié : Date + Produit + Pays + Dépôt.
+    Sidebar : Date + Produit (avec nom depuis BD) + Pays + Dépôt.
     Retourne (df_filtered, product, depot_id, depot_sel, date_range, selected_country).
-      - df_filtered      : DataFrame filtré prêt à l'emploi
-      - product          : int ou None
-      - depot_id         : int ou "all"
-      - depot_sel        : str (nom du dépôt sélectionné)
-      - date_range       : tuple (date_min, date_max)
-      - selected_country : str ou None
     """
-    df_full = load_full_data()
+    df_full      = load_full_data()
+    product_names = load_product_names()   # {ref_product: name} depuis la BD
 
     # --- Date ---
     st.sidebar.header("🔎 Filtrage")
@@ -142,8 +132,13 @@ def sidebar_filters():
     product_rank_sb = (df_full.groupby("ref_product")["total"]
                        .sum().reset_index()
                        .sort_values("total", ascending=False))
-    product_rank_sb["label"] = product_rank_sb.apply(
-        lambda x: f"{x['ref_product']}  (💰 {int(x['total']):,})", axis=1)
+
+    def make_label(row):
+        ref = int(row["ref_product"])
+        nom = product_names.get(ref, "Inconnu")
+        return f"#{ref} — {nom}  (💰 {int(row['total']):,})"
+
+    product_rank_sb["label"] = product_rank_sb.apply(make_label, axis=1)
 
     labels_sb = ["🌐 Tous les produits"] + product_rank_sb["label"].tolist()
     selected_label = st.sidebar.selectbox("Choisir un produit", labels_sb)
@@ -151,7 +146,8 @@ def sidebar_filters():
     if selected_label == "🌐 Tous les produits":
         product = None
     else:
-        product = int(float(selected_label.split("  ")[0]))
+        product = int(selected_label.split("—")[0].replace("#", "").strip())
+
     st.session_state["product"] = product
 
     # --- Pays ---
@@ -162,7 +158,7 @@ def sidebar_filters():
     if selected_country == "🌐 Tous les pays":
         selected_country = None
 
-    # --- Dépôt (filtré par pays) ---
+    # --- Dépôt ---
     st.sidebar.markdown("---")
     st.sidebar.subheader("🏭 Dépôt")
     if selected_country:
@@ -189,9 +185,11 @@ def sidebar_filters():
     st.session_state["depot_id"]   = depot_id
     st.session_state["depot_name"] = depot_sel
     st.session_state["zone_name"]  = zone_name
-    st.sidebar.caption(f"Produit: {product or 'Tous'} | Dépôt: {depot_sel}")
 
-    # --- Application des filtres ---
+    prod_label = product_names.get(product, f"#{product}") if product else "Tous"
+    st.sidebar.caption(f"Produit: {prod_label} | Dépôt: {depot_sel}")
+
+    # --- Filtres ---
     df = df_full.copy()
     if len(date_range) == 2:
         df = df[

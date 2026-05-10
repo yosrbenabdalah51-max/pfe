@@ -20,11 +20,10 @@ st.set_page_config(page_title="LSTM", page_icon="🔴")
 st.title("📈 Prévision avec LSTM")
 
 EXCLUDED_DEPOT_IDS = {8, 41, 57}
-
 SEQ_LENGTH = 30
 
 # =========================
-# CHARGEMENT COMPLET (comme app)
+# CHARGEMENT COMPLET
 # =========================
 @st.cache_data(ttl=300)
 def load_data():
@@ -53,7 +52,7 @@ def load_data():
 df_full = load_data()
 
 # =========================
-# SIDEBAR + FILTRES — via utils.sidebar_filters()
+# SIDEBAR + FILTRES
 # =========================
 df, product, depot_id, depot_sel, date_range, selected_country = sidebar_filters()
 
@@ -63,7 +62,6 @@ if df is None or len(df) == 0:
 
 # =========================
 # PRÉPARATION + LISSAGE
-# IMPORTANT : pas de @st.cache_data ici (empêche rechargement par produit)
 # =========================
 def prepare_and_smooth(df, product, depot_id):
     df_d = (df
@@ -71,24 +69,16 @@ def prepare_and_smooth(df, product, depot_id):
             .sum()
             .reset_index()
             .rename(columns={"date_time": "ds", "quantity": "y"}))
-
     df_d = df_d.set_index("ds").asfreq("D").reset_index()
-
-    # Zéros conservés
     df_d["y"] = df_d["y"].fillna(0)
-
-    # Lissage adaptatif
     n_nonzero = (df_d["y"] > 0).sum()
     window = 7 if n_nonzero >= 60 else (3 if n_nonzero >= 20 else 1)
     if window > 1:
         df_d["y"] = df_d["y"].rolling(window=window, min_periods=1, center=True).mean()
-
-    # Clip outliers vers le haut uniquement
     mean_y = df_d["y"].mean()
     std_y  = df_d["y"].std()
     if std_y > 0:
         df_d["y"] = df_d["y"].clip(lower=0, upper=mean_y + 3 * std_y)
-
     df_d = df_d.dropna(subset=["y"]).reset_index(drop=True)
     return df_d
 
@@ -104,6 +94,9 @@ st.info(f"📅 [{label_produit}] Série lissée (journalière) — **{len(df_mod
 if len(df_model) < SEQ_LENGTH + 10:
     st.warning(f"⚠️ Pas assez de données ({len(df_model)} points). Minimum requis : {SEQ_LENGTH + 10}.")
     st.stop()
+
+# Moyenne journalière des ventes
+avg_daily_sales = df_model["y"].mean()
 
 # =========================
 # SCALE
@@ -180,6 +173,9 @@ r2   = r2_score(y_true, y_pred) if len(y_true) > 1 else float('nan')
 mask = y_true != 0
 mape = np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100 if mask.any() else float("nan")
 
+mae_pct_of_avg  = (mae  / avg_daily_sales * 100) if avg_daily_sales > 0 else float('nan')
+rmse_pct_of_avg = (rmse / avg_daily_sales * 100) if avg_daily_sales > 0 else float('nan')
+
 # =========================
 # FORECAST jusqu'au 31/12/2026
 # =========================
@@ -211,34 +207,27 @@ with st.spinner("⏳ Génération des prévisions futures..."):
     )
 
 # =========================
-# AUTO-SAVE FORECAST → forecasts/
+# AUTO-SAVE FORECAST
 # =========================
 save_dir = "forecasts"
 os.makedirs(save_dir, exist_ok=True)
-
 ref_tag      = str(product) if product else "all"
 depot_id_tag = str(st.session_state.get("depot_id", "all"))
 save_path    = os.path.join(save_dir, f"forecast_{ref_tag}_{depot_id_tag}.csv")
-
 forecast_to_save = forecast.copy()
 forecast_to_save["ref_product"] = ref_tag
 forecast_to_save["depot_id"]    = depot_id_tag
 forecast_to_save.to_csv(save_path, index=False)
-
 st.success(f"✅ Prévisions sauvegardées → {save_path}")
 
 # =========================
 # QUALITÉ DU MODÈLE
 # =========================
 def get_quality(r2, mape):
-    if r2 >= 0.85 and mape <= 10:
-        return "#28a745", "🟢 Excellent"
-    elif r2 >= 0.70 and mape <= 20:
-        return "#ffc107", "🟡 Bon"
-    elif r2 >= 0.50 and mape <= 50:
-        return "#fd7e14", "🟠 Moyen"
-    else:
-        return "#dc3545", "🔴 Faible"
+    if r2 >= 0.85 and mape <= 10:   return "#28a745", "🟢 Excellent"
+    elif r2 >= 0.70 and mape <= 20: return "#ffc107", "🟡 Bon"
+    elif r2 >= 0.50 and mape <= 50: return "#fd7e14", "🟠 Moyen"
+    else:                           return "#dc3545", "🔴 Faible"
 
 color, label = get_quality(r2, mape)
 r2_pct   = max(0.0, min(r2 if not np.isnan(r2) else 0, 1.0)) * 100
@@ -250,7 +239,6 @@ mape_bar = max(0.0, 100.0 - min(mape_val, 100.0))
 # =========================
 chart_start = pd.Timestamp("2024-01-01")
 chart_end   = pd.Timestamp("2026-12-31")
-
 if df_model["ds"].max() < chart_start:
     chart_start = df_model["ds"].min()
 
@@ -271,18 +259,30 @@ forecast_chart = forecast[
 ]
 
 # =========================
+# Prévisions mensuelles
+# =========================
+forecast['month'] = forecast['ds'].dt.to_period('M')
+monthly_forecast  = forecast.groupby('month')['yhat'].sum().reset_index()
+monthly_forecast['month_str'] = monthly_forecast['month'].astype(str)
+
+today = pd.Timestamp.today().normalize()
+future_monthly = monthly_forecast[
+    monthly_forecast['month'].apply(lambda p: p.to_timestamp()) >= today.replace(day=1)
+].copy()
+
+next_month_qty   = future_monthly['yhat'].iloc[0]  if len(future_monthly) >= 1 else float('nan')
+next_month_label = future_monthly['month_str'].iloc[0] if len(future_monthly) >= 1 else "—"
+best_month_qty   = future_monthly['yhat'].max()    if not future_monthly.empty else float('nan')
+best_month_label = future_monthly.loc[future_monthly['yhat'].idxmax(), 'month_str'] if not future_monthly.empty else "—"
+trend = "📈 Hausse" if len(future_monthly) >= 2 and future_monthly['yhat'].iloc[-1] > future_monthly['yhat'].iloc[0] else "📉 Baisse"
+
+# =========================
 # TABS
 # =========================
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📈 Graphique",
-    "📊 Performance",
-    "📋 Prévisions",
-    "📌 KPIs"
-])
+tab1, tab2, tab3 = st.tabs(["📈 Graphique", "📊 Performance", "📌 KPIs"])
 
 with tab1:
     st.subheader(f"Historique + Prévision — {label_produit} (2024–2026)")
-
     fig = go.Figure()
     if len(train_dates_chart) > 0:
         fig.add_trace(go.Scatter(
@@ -309,19 +309,52 @@ with tab1:
         template="plotly_white", hovermode="x unified", height=500)
     st.plotly_chart(fig, use_container_width=True)
 
+# =========================
+# TAB 2 — Performance
+# =========================
 with tab2:
     st.subheader("Indicateurs de Performance du Modèle")
 
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("MAE",  f"{mae:.2f}",        help="Erreur absolue moyenne")
-    col2.metric("RMSE", f"{rmse:.2f}",        help="Racine erreur quadratique moyenne")
-    col3.metric("MAPE", f"{mape_val:.2f}%",   help="Erreur absolue en %")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("MAE",  f"{mae:.2f}",
+                help="Erreur absolue moyenne — comparez avec la moyenne journalière ci-dessous.")
+    col2.metric("RMSE", f"{rmse:.2f}",
+                help="Erreur quadratique — pénalise les grandes erreurs.")
+    col3.metric("MAPE", f"{mape_val:.2f}%",
+                help="Erreur en % par rapport aux vraies valeurs.")
     col4.metric("R²",   f"{r2:.4f}" if not np.isnan(r2) else "N/A",
-                help="Coefficient de détermination (1 = parfait)")
+                help="Proportion de variance expliquée. Plus proche de 1 = meilleur modèle.")
+    col5.metric("Moy. vente / jour", f"{avg_daily_sales:.2f}",
+                help="Référence pour interpréter MAE et RMSE.")
+
+    # Comparaison MAE / RMSE vs moyenne journalière
+    st.divider()
+    st.markdown("#### 📊 Erreurs vs Moyenne des ventes journalières")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(f"**MAE ({mae:.2f})** représente **{mae_pct_of_avg:.1f}%** de la moyenne journalière ({avg_daily_sales:.2f})")
+        mae_bar_pct = min(mae_pct_of_avg, 100) if not np.isnan(mae_pct_of_avg) else 0
+        mae_color = "#28a745" if mae_pct_of_avg <= 10 else "#ffc107" if mae_pct_of_avg <= 25 else "#dc3545"
+        st.markdown(f"""
+        <div style="background:#e0e0e0; border-radius:10px; height:22px; width:100%;">
+            <div style="background:{mae_color}; width:{mae_bar_pct:.1f}%; height:22px; border-radius:10px;"></div>
+        </div>
+        <p style="text-align:right; font-size:12px; color:gray;">{'✅ Faible erreur' if mae_pct_of_avg <= 10 else '⚠️ Erreur modérée' if mae_pct_of_avg <= 25 else '❌ Erreur élevée'}</p>
+        """, unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"**RMSE ({rmse:.2f})** représente **{rmse_pct_of_avg:.1f}%** de la moyenne journalière ({avg_daily_sales:.2f})")
+        rmse_bar_pct = min(rmse_pct_of_avg, 100) if not np.isnan(rmse_pct_of_avg) else 0
+        rmse_color = "#28a745" if rmse_pct_of_avg <= 10 else "#ffc107" if rmse_pct_of_avg <= 25 else "#dc3545"
+        st.markdown(f"""
+        <div style="background:#e0e0e0; border-radius:10px; height:22px; width:100%;">
+            <div style="background:{rmse_color}; width:{rmse_bar_pct:.1f}%; height:22px; border-radius:10px;"></div>
+        </div>
+        <p style="text-align:right; font-size:12px; color:gray;">{'✅ Faible erreur' if rmse_pct_of_avg <= 10 else '⚠️ Erreur modérée' if rmse_pct_of_avg <= 25 else '❌ Erreur élevée'}</p>
+        """, unsafe_allow_html=True)
 
     st.divider()
     st.markdown(f"### Qualité du modèle : {label}")
-
     col_r2, col_mape = st.columns(2)
     with col_r2:
         st.markdown("**R² — Coefficient de détermination**")
@@ -336,7 +369,6 @@ with tab2:
         </div>
         <p style="text-align:right; font-size:13px; color:gray;">R² = {r2_label} &nbsp;|&nbsp; {r2_text}</p>
         """, unsafe_allow_html=True)
-
     with col_mape:
         st.markdown("**MAPE — Erreur absolue en %**")
         mape_text = ('≤ 10% Excellent' if mape_val <= 10
@@ -351,43 +383,72 @@ with tab2:
         """, unsafe_allow_html=True)
 
     st.divider()
-    if label == "🟢 Excellent":
-        st.success("✅ LSTM est très bien adapté à ce produit !")
-    elif label == "🟡 Bon":
-        st.info("ℹ️ Bonne performance. LSTM est fiable pour ce produit.")
-    elif label == "🟠 Moyen":
-        st.warning("⚠️ Performance moyenne. Essayez Prophet ou ARIMA.")
-    else:
-        st.error("❌ Performance faible. Essayez Prophet ou ARIMA pour ce produit.")
-
-with tab3:
-    st.subheader("Tableau de prévision (50 derniers points)")
-    st.dataframe(forecast.tail(50), use_container_width=True)
-
-    csv = forecast.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        "⬇️ Exporter toutes les prévisions (CSV)",
-        data=csv,
-        file_name=f"forecast_lstm_{ref_tag}_{depot_id_tag}.csv",
-        mime="text/csv"
-    )
-
-with tab4:
-    st.subheader("KPIs Clés")
-
-    kpi1, kpi2, kpi3 = st.columns(3)
-    kpi1.metric("Dernière prévision",      f"{forecast['yhat'].iloc[-1]:.2f}")
-    kpi2.metric("Moyenne prévision (30j)", f"{forecast['yhat'].iloc[-30:].mean():.2f}")
-    kpi3.metric("Max prévision",           f"{forecast['yhat'].max():.2f}")
-
-    st.divider()
-    st.markdown(f"**📁 Fichier sauvegardé :** `{save_path}`")
-
-    if st.button("➡️ Aller à Stock Management", use_container_width=True):
-        st.switch_page("pages/Stock_Management.py")
+    if label == "🟢 Excellent":   st.success("✅ LSTM est très bien adapté à ce produit !")
+    elif label == "🟡 Bon":       st.info("ℹ️ Bonne performance. LSTM est fiable pour ce produit.")
+    elif label == "🟠 Moyen":     st.warning("⚠️ Performance moyenne. Essayez Prophet ou ARIMA.")
+    else:                          st.error("❌ Performance faible. Essayez Prophet ou ARIMA pour ce produit.")
 
 # =========================
-# ✅ SAUVEGARDE SESSION_STATE pour la page Comparaison
+# TAB 3 — KPIs + Prévisions mensuelles
+# =========================
+with tab3:
+    st.subheader("📌 KPIs Clés")
+    k1, k2, k3 = st.columns(3)
+    k1.metric(
+        f"Prochain mois ({next_month_label})",
+        f"{next_month_qty:,.0f} unités",
+        help="Quantité totale prévue pour le mois qui vient."
+    )
+    k2.metric(
+        f"Meilleur mois prévu ({best_month_label})",
+        f"{best_month_qty:,.0f} unités",
+        help="Le mois avec la plus forte prévision sur toute la période future."
+    )
+    k3.metric(
+        "Tendance générale",
+        trend,
+        help="Comparaison entre la prévision du premier et du dernier mois disponible."
+    )
+    st.divider()
+    st.subheader("📅 Prévisions par mois à venir")
+
+    if future_monthly.empty:
+        st.info("Aucune prévision mensuelle disponible au-delà d'aujourd'hui.")
+    else:
+        fig_monthly = go.Figure()
+        fig_monthly.add_trace(go.Bar(
+            x=future_monthly['month_str'],
+            y=future_monthly['yhat'].round(0),
+            name='Total prévu',
+            marker_color='#e74c3c',
+            opacity=0.85,
+        ))
+        fig_monthly.update_layout(
+            template="plotly_white",
+            xaxis_title="Mois",
+            yaxis_title="Quantité prévue",
+            height=380,
+            margin=dict(l=0, r=0, t=20, b=0),
+            bargap=0.3,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        st.plotly_chart(fig_monthly, use_container_width=True)
+
+        display_monthly = future_monthly[['month_str', 'yhat']].copy()
+        display_monthly.columns = ['Mois', 'Quantité prévue']
+        display_monthly['Quantité prévue'] = display_monthly['Quantité prévue'].round(1)
+        csv_monthly = display_monthly.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            "📥 Exporter prévisions mensuelles (CSV)",
+            data=csv_monthly,
+            file_name=f"previsions_mensuelles_lstm_{ref_tag}_{depot_id_tag}.csv",
+            mime="text/csv"
+        )
+
+
+
+# =========================
+# ✅ SAUVEGARDE SESSION_STATE
 # =========================
 freq_label = "hebdomadaire" if len(df_model) < 60 else "journalière"
 

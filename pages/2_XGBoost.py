@@ -151,6 +151,9 @@ r2   = r2_score(y_true, y_pred) if len(y_true) > 1 else float('nan')
 mask = y_true != 0
 mape = np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100 if mask.any() else float('nan')
 
+# Moyenne journalière des ventes (sur toute la série historique)
+avg_daily_sales = df_model['y'].mean()
+
 # =========================
 # Prévision Future
 # =========================
@@ -210,9 +213,27 @@ test_chart['yhat'] = np.clip(model.predict(test_chart[FEATURE_COLS]), 0, None)
 forecast_future_chart = forecast_future_df[forecast_future_df['ds'] <= chart_end]
 
 # =========================
+# Prévisions mensuelles agrégées (style ARIMA)
+# =========================
+forecast_future_df['month'] = forecast_future_df['ds'].dt.to_period('M')
+monthly_forecast = forecast_future_df.groupby('month')['yhat'].sum().reset_index()
+monthly_forecast['month_str'] = monthly_forecast['month'].astype(str)
+
+today = pd.Timestamp.today().normalize()
+future_monthly = monthly_forecast[
+    monthly_forecast['month'].apply(lambda p: p.to_timestamp()) >= today.replace(day=1)
+].copy()
+
+next_month_qty   = future_monthly['yhat'].iloc[0]  if len(future_monthly) >= 1 else float('nan')
+next_month_label = future_monthly['month_str'].iloc[0] if len(future_monthly) >= 1 else "—"
+best_month_qty   = future_monthly['yhat'].max()    if not future_monthly.empty else float('nan')
+best_month_label = future_monthly.loc[future_monthly['yhat'].idxmax(), 'month_str'] if not future_monthly.empty else "—"
+trend = "📈 Hausse" if len(future_monthly) >= 2 and future_monthly['yhat'].iloc[-1] > future_monthly['yhat'].iloc[0] else "📉 Baisse"
+
+# =========================
 # TABS
 # =========================
-tab1, tab2, tab3, tab4 = st.tabs(["📈 Graphique", "📊 Performance", "📋 Prévisions", "📌 KPIs"])
+tab1, tab2, tab3 = st.tabs(["📈 Graphique", "📊 Performance", "📌 KPIs & Prévisions mensuelles"])
 
 with tab1:
     st.subheader(f"Historique & Prévision — {label_produit} (2024–2026)")
@@ -240,13 +261,48 @@ with tab1:
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     st.plotly_chart(fig, use_container_width=True)
 
+# =========================
+# TAB 2 — Performance (sans feature importance)
+# =========================
 with tab2:
     st.subheader("Indicateurs de Performance du Modèle")
-    col1, col2, col3, col4 = st.columns(4)
+
+    col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("MAE",  f"{mae:.2f}")
     col2.metric("RMSE", f"{rmse:.2f}")
     col3.metric("MAPE", f"{mape_val:.2f}%")
     col4.metric("R²",   f"{r2:.4f}" if not np.isnan(r2) else "N/A")
+    col5.metric("Moy. ventes/jour", f"{avg_daily_sales:.2f}")
+
+    # Comparaison MAE / RMSE vs moyenne journalière
+    st.divider()
+    st.markdown("#### 📊 Erreurs vs Moyenne des ventes journalières")
+
+    mae_pct_of_avg  = (mae  / avg_daily_sales * 100) if avg_daily_sales > 0 else float('nan')
+    rmse_pct_of_avg = (rmse / avg_daily_sales * 100) if avg_daily_sales > 0 else float('nan')
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(f"**MAE ({mae:.2f})** représente **{mae_pct_of_avg:.1f}%** de la moyenne journalière ({avg_daily_sales:.2f})")
+        mae_bar_pct = min(mae_pct_of_avg, 100) if not np.isnan(mae_pct_of_avg) else 0
+        mae_color = "#28a745" if mae_pct_of_avg <= 10 else "#ffc107" if mae_pct_of_avg <= 25 else "#dc3545"
+        st.markdown(f"""
+        <div style="background:#e0e0e0; border-radius:10px; height:22px; width:100%;">
+            <div style="background:{mae_color}; width:{mae_bar_pct:.1f}%; height:22px; border-radius:10px;"></div>
+        </div>
+        <p style="text-align:right; font-size:12px; color:gray;">{'✅ Faible erreur' if mae_pct_of_avg <= 10 else '⚠️ Erreur modérée' if mae_pct_of_avg <= 25 else '❌ Erreur élevée'}</p>
+        """, unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"**RMSE ({rmse:.2f})** représente **{rmse_pct_of_avg:.1f}%** de la moyenne journalière ({avg_daily_sales:.2f})")
+        rmse_bar_pct = min(rmse_pct_of_avg, 100) if not np.isnan(rmse_pct_of_avg) else 0
+        rmse_color = "#28a745" if rmse_pct_of_avg <= 10 else "#ffc107" if rmse_pct_of_avg <= 25 else "#dc3545"
+        st.markdown(f"""
+        <div style="background:#e0e0e0; border-radius:10px; height:22px; width:100%;">
+            <div style="background:{rmse_color}; width:{rmse_bar_pct:.1f}%; height:22px; border-radius:10px;"></div>
+        </div>
+        <p style="text-align:right; font-size:12px; color:gray;">{'✅ Faible erreur' if rmse_pct_of_avg <= 10 else '⚠️ Erreur modérée' if rmse_pct_of_avg <= 25 else '❌ Erreur élevée'}</p>
+        """, unsafe_allow_html=True)
+
     st.divider()
     st.markdown(f"### Qualité du modèle : {label}")
     col_r2, col_mape = st.columns(2)
@@ -275,33 +331,70 @@ with tab2:
         </div>
         <p style="text-align:right; font-size:13px; color:gray;">MAPE = {mape_val:.2f}% &nbsp;|&nbsp; {mape_text}</p>
         """, unsafe_allow_html=True)
-    st.divider()
-    st.markdown("### 🔍 Importance des Features")
-    importances = pd.Series(model.feature_importances_, index=FEATURE_COLS).sort_values(ascending=False)
-    fig_imp = go.Figure(go.Bar(x=importances.values[:15], y=importances.index[:15],
-        orientation='h', marker_color='#1f77b4'))
-    fig_imp.update_layout(height=400, template="plotly_white",
-        xaxis_title="Importance", yaxis_title="Feature", yaxis=dict(autorange="reversed"))
-    st.plotly_chart(fig_imp, use_container_width=True)
+
     st.divider()
     if label == "🟢 Excellent":   st.success("✅ XGBoost est très bien adapté à ce produit !")
     elif label == "🟡 Bon":       st.info("ℹ️ Bonne performance. XGBoost est fiable pour ce produit.")
     elif label == "🟠 Moyen":     st.warning("⚠️ Performance moyenne. Essayez LSTM ou un tuning des hyperparamètres.")
     else:                          st.error("❌ Performance faible. Essayez LSTM ou enrichissez les features.")
 
+# =========================
+# TAB 3 — KPIs + Prévisions mensuelles (style ARIMA)
+# =========================
 with tab3:
-    st.subheader("Tableau de prévision (50 derniers points)")
-    st.dataframe(forecast_future_df[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(50),
-        height=400, use_container_width=True)
-    csv = forecast_future_df.to_csv(index=False).encode('utf-8')
-st.download_button("📥 Exporter CSV", data=csv, file_name="previsions_xgboost.csv", mime="text/csv")
+    st.subheader("📌 KPIs Clés")
+    k1, k2, k3 = st.columns(3)
+    k1.metric(
+        f"Prochain mois ({next_month_label})",
+        f"{next_month_qty:,.0f} unités",
+        help="Quantité totale prévue pour le mois qui vient."
+    )
+    k2.metric(
+        f"Meilleur mois prévu ({best_month_label})",
+        f"{best_month_qty:,.0f} unités",
+        help="Le mois avec la plus forte prévision sur toute la période future."
+    )
+    k3.metric(
+        "Tendance générale",
+        trend,
+        help="Comparaison entre la prévision du premier et du dernier mois disponible."
+    )
+    st.divider()
+    st.subheader("📅 Détail mois par mois")
 
-with tab4:
-    st.subheader("KPIs Clés")
-    kpi1, kpi2, kpi3 = st.columns(3)
-    kpi1.metric("Dernière prévision",      f"{forecast_future_df['yhat'].iloc[-1]:.2f}")
-    kpi2.metric("Moyenne prévision (30j)", f"{forecast_future_df['yhat'].iloc[-30:].mean():.2f}")
-    kpi3.metric("Max prévision",           f"{forecast_future_df['yhat'].max():.2f}")
+    if future_monthly.empty:
+        st.info("Aucune prévision mensuelle disponible au-delà d'aujourd'hui.")
+    else:
+        fig_monthly = go.Figure()
+        fig_monthly.add_trace(go.Bar(
+            x=future_monthly['month_str'],
+            y=future_monthly['yhat'].round(0),
+            text=future_monthly['yhat'].round(0).astype(int),
+            textposition='outside',
+            marker_color='#1f77b4',
+            opacity=0.85,
+            name='Quantité prévue'
+        ))
+        fig_monthly.update_layout(
+            template="plotly_white",
+            xaxis_title="Mois",
+            yaxis_title="Quantité prévue",
+            height=380,
+            margin=dict(l=0, r=0, t=20, b=0),
+            bargap=0.3
+        )
+        st.plotly_chart(fig_monthly, use_container_width=True)
+
+        display_monthly = future_monthly[['month_str', 'yhat']].copy()
+        display_monthly.columns = ['Mois', 'Quantité prévue']
+        display_monthly['Quantité prévue'] = display_monthly['Quantité prévue'].round(1)
+        csv_monthly = display_monthly.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            "📥 Exporter prévisions mensuelles (CSV)",
+            data=csv_monthly,
+            file_name="previsions_mensuelles_xgboost.csv",
+            mime="text/csv"
+        )
 
 # =========================
 # ✅ SAUVEGARDE SESSION_STATE pour la page Comparaison
@@ -317,6 +410,5 @@ st.session_state[sess_key] = {
     "product":   product,
     "depot_id":  depot_id,
     "depot_sel": depot_sel,
-    
-    "freq": freq_label,  # "journalière" ou "hebdomadaire"
+    "freq":      freq_label,
 }

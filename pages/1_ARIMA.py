@@ -16,19 +16,12 @@ warnings.filterwarnings("ignore")
 st.set_page_config(page_title="Prévision ARIMA", page_icon="🟢")
 st.title("📈 Dashboard Prévision des Ventes - ARIMA")
 
-
-# =========================
-# SIDEBAR + FILTRES — via utils.sidebar_filters()
-# =========================
 df, product, depot_id, depot_sel, date_range, selected_country = sidebar_filters()
 
 if df is None or len(df) == 0:
     st.error(f"❌ Aucune vente trouvée pour le produit **{product or 'Tous'}** / dépôt **{depot_sel}**.")
     st.stop()
 
-# =========================
-# Préparation + Lissage
-# =========================
 def prepare_and_smooth(df):
     df_d = (df.groupby(pd.Grouper(key='date_time', freq='D'))['quantity']
             .sum().reset_index()
@@ -75,9 +68,6 @@ if len(test_df) == 0:
     train_df = df_model.iloc[:-1]
     test_df  = df_model.iloc[-1:]
 
-# =========================
-# Meilleur ordre ARIMA
-# =========================
 @st.cache_data
 def find_best_arima_order(train_y_tuple, small=False):
     train_y = list(train_y_tuple)
@@ -98,9 +88,6 @@ with st.spinner("🔍 Recherche du meilleur ordre ARIMA (p,d,q)..."):
 
 st.success(f"✅ Meilleur ordre ARIMA : {best_order}")
 
-# =========================
-# Entraînement + prédictions test
-# =========================
 @st.cache_data
 def train_arima(train_y_tuple, order, test_len):
     model_fit = ARIMA(list(train_y_tuple), order=order).fit()
@@ -110,9 +97,6 @@ def train_arima(train_y_tuple, order, test_len):
 with st.spinner("⏳ Entraînement ARIMA..."):
     test_preds = train_arima(tuple(train_df['y'].values), best_order, len(test_df))
 
-# =========================
-# Métriques
-# =========================
 y_true = test_df['y'].values
 y_pred = test_preds
 
@@ -122,9 +106,11 @@ r2   = r2_score(y_true, y_pred) if len(y_true) > 1 else float('nan')
 mask = y_true != 0
 mape = np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100 if mask.any() else float('nan')
 
-# =========================
-# Forecast jusqu'au 31/12/2026
-# =========================
+daily_avg = df_model['y'].mean()
+daily_avg_display = daily_avg / 7 if freq_label == "hebdomadaire" else daily_avg
+mae_pct  = (mae  / daily_avg_display * 100) if daily_avg_display > 0 else float('nan')
+rmse_pct = (rmse / daily_avg_display * 100) if daily_avg_display > 0 else float('nan')
+
 @st.cache_data
 def make_full_forecast(full_y_tuple, order, last_date, freq_label):
     model_full   = ARIMA(list(full_y_tuple), order=order).fit()
@@ -139,9 +125,21 @@ def make_full_forecast(full_y_tuple, order, last_date, freq_label):
 with st.spinner("⏳ Génération des prévisions futures..."):
     forecast = make_full_forecast(tuple(df_model['y'].values), best_order, df_model['ds'].max(), freq_label)
 
-# =========================
-# Qualité du modèle
-# =========================
+forecast['month'] = forecast['ds'].dt.to_period('M')
+monthly_forecast  = forecast.groupby('month')['yhat'].sum().reset_index()
+monthly_forecast['month_str'] = monthly_forecast['month'].astype(str)
+
+today = pd.Timestamp.today().normalize()
+future_monthly = monthly_forecast[
+    monthly_forecast['month'].apply(lambda p: p.to_timestamp()) >= today.replace(day=1)
+].copy()
+
+next_month_qty   = future_monthly['yhat'].iloc[0]  if len(future_monthly) >= 1 else float('nan')
+next_month_label = future_monthly['month_str'].iloc[0] if len(future_monthly) >= 1 else "—"
+best_month_qty   = future_monthly['yhat'].max()    if not future_monthly.empty else float('nan')
+best_month_label = future_monthly.loc[future_monthly['yhat'].idxmax(), 'month_str'] if not future_monthly.empty else "—"
+trend = "📈 Hausse" if len(future_monthly) >= 2 and future_monthly['yhat'].iloc[-1] > future_monthly['yhat'].iloc[0] else "📉 Baisse"
+
 def get_quality(r2, mape):
     if r2 >= 0.85 and mape <= 10:   return "#28a745", "🟢 Excellent"
     elif r2 >= 0.70 and mape <= 20: return "#ffc107", "🟡 Bon"
@@ -153,9 +151,6 @@ r2_pct   = max(0.0, min(r2 if not np.isnan(r2) else 0, 1.0)) * 100
 mape_val = mape if not np.isnan(mape) else 100
 mape_bar = max(0.0, 100.0 - min(mape_val, 100.0))
 
-# =========================
-# Filtrage graphique 2024 → 2026
-# =========================
 chart_start = pd.Timestamp("2024-01-01")
 chart_end   = pd.Timestamp("2026-12-31")
 if df_model['ds'].max() < chart_start:
@@ -167,10 +162,7 @@ test_preds_s     = pd.Series(test_preds, index=test_df['ds'])
 test_preds_chart = test_preds_s[(test_preds_s.index >= chart_start) & (test_preds_s.index <= chart_end)]
 forecast_chart   = forecast[(forecast['ds'] >= chart_start) & (forecast['ds'] <= chart_end)]
 
-# =========================
-# TABS
-# =========================
-tab1, tab2, tab3, tab4 = st.tabs(["📈 Graphique", "📊 Performance", "📋 Prévisions", "📌 KPIs"])
+tab1, tab2, tab3 = st.tabs(["📈 Graphique", "📊 Performance", "📌 KPIs"])
 
 with tab1:
     st.subheader(f"Historique + Prévision — {label_produit} ({freq_label})")
@@ -194,11 +186,52 @@ with tab1:
 
 with tab2:
     st.subheader("Indicateurs de Performance du Modèle")
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("MAE",  f"{mae:.2f}")
-    col2.metric("RMSE", f"{rmse:.2f}")
-    col3.metric("MAPE", f"{mape_val:.2f}%")
-    col4.metric("R²",   f"{r2:.4f}" if not np.isnan(r2) else "N/A")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("MAE",  f"{mae:.2f}",
+                help="Erreur absolue moyenne — comparez avec la moyenne journalière ci-dessous.")
+    col2.metric("RMSE", f"{rmse:.2f}",
+                help="Erreur quadratique — pénalise les grandes erreurs. Comparez avec la moyenne journalière.")
+    col3.metric("MAPE", f"{mape_val:.2f}%",
+                help="Erreur en % par rapport aux vraies valeurs.")
+    col4.metric("R²",   f"{r2:.4f}" if not np.isnan(r2) else "N/A",
+                help="Proportion de variance expliquée. Plus proche de 1 = meilleur modèle.")
+    col5.metric("Moy. vente / jour", f"{daily_avg_display:.2f}",
+                help="Référence pour interpréter MAE et RMSE : si MAE ≈ moyenne, le modèle est peu précis.")
+    st.caption(
+        f"💡 MAE = **{mae_pct:.1f}%** de la vente moyenne journalière · "
+        f"RMSE = **{rmse_pct:.1f}%** — "
+        f"{'✅ Erreur faible, modèle précis' if mae_pct < 20 else '⚠️ Erreur élevée par rapport à la moyenne'}."
+    )
+
+    # Comparaison MAE / RMSE vs moyenne journalière
+    st.divider()
+    st.markdown("#### 📊 Erreurs vs Moyenne des ventes journalières")
+
+    mae_pct_of_avg  = (mae  / daily_avg_display * 100) if daily_avg_display > 0 else float('nan')
+    rmse_pct_of_avg = (rmse / daily_avg_display * 100) if daily_avg_display > 0 else float('nan')
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(f"**MAE ({mae:.2f})** représente **{mae_pct_of_avg:.1f}%** de la moyenne journalière ({daily_avg_display:.2f})")
+        mae_bar_pct = min(mae_pct_of_avg, 100) if not np.isnan(mae_pct_of_avg) else 0
+        mae_color = "#28a745" if mae_pct_of_avg <= 10 else "#ffc107" if mae_pct_of_avg <= 25 else "#dc3545"
+        st.markdown(f"""
+        <div style="background:#e0e0e0; border-radius:10px; height:22px; width:100%;">
+            <div style="background:{mae_color}; width:{mae_bar_pct:.1f}%; height:22px; border-radius:10px;"></div>
+        </div>
+        <p style="text-align:right; font-size:12px; color:gray;">{'✅ Faible erreur' if mae_pct_of_avg <= 10 else '⚠️ Erreur modérée' if mae_pct_of_avg <= 25 else '❌ Erreur élevée'}</p>
+        """, unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"**RMSE ({rmse:.2f})** représente **{rmse_pct_of_avg:.1f}%** de la moyenne journalière ({daily_avg_display:.2f})")
+        rmse_bar_pct = min(rmse_pct_of_avg, 100) if not np.isnan(rmse_pct_of_avg) else 0
+        rmse_color = "#28a745" if rmse_pct_of_avg <= 10 else "#ffc107" if rmse_pct_of_avg <= 25 else "#dc3545"
+        st.markdown(f"""
+        <div style="background:#e0e0e0; border-radius:10px; height:22px; width:100%;">
+            <div style="background:{rmse_color}; width:{rmse_bar_pct:.1f}%; height:22px; border-radius:10px;"></div>
+        </div>
+        <p style="text-align:right; font-size:12px; color:gray;">{'✅ Faible erreur' if rmse_pct_of_avg <= 10 else '⚠️ Erreur modérée' if rmse_pct_of_avg <= 25 else '❌ Erreur élevée'}</p>
+        """, unsafe_allow_html=True)
+
     st.divider()
     st.markdown(f"### Qualité du modèle : {label}")
     col_r2, col_mape = st.columns(2)
@@ -233,33 +266,84 @@ with tab2:
     elif label == "🟠 Moyen":     st.warning("⚠️ Performance moyenne. Essayez Prophet ou LSTM.")
     else:                          st.error("❌ Performance faible. Essayez Prophet ou LSTM pour ce produit.")
 
+# =========================
+# TAB 3 — KPIs + Prévisions mensuelles (style XGBoost)
+# =========================
 with tab3:
-    st.subheader("Tableau de prévision (50 derniers points)")
-    st.dataframe(forecast.tail(50), use_container_width=True)
-    csv = forecast.to_csv(index=False).encode('utf-8')
-st.download_button("📥 Exporter CSV", data=csv, file_name="previsions_arima.csv", mime="text/csv")
+    st.subheader("📌 KPIs Clés")
+    k1, k2, k3 = st.columns(3)
+    k1.metric(
+        f"Prochain mois ({next_month_label})",
+        f"{next_month_qty:,.0f} unités",
+        help="Quantité totale prévue pour le mois qui vient."
+    )
+    k2.metric(
+        f"Meilleur mois prévu ({best_month_label})",
+        f"{best_month_qty:,.0f} unités",
+        help="Le mois avec la plus forte prévision sur toute la période future."
+    )
+    k3.metric(
+        "Tendance générale",
+        trend,
+        help="Comparaison entre la prévision du premier et du dernier mois disponible."
+    )
+    st.divider()
+    st.subheader("📅 Prévisions par mois à venir")
 
-with tab4:
-    st.subheader("KPIs Clés")
-    kpi1, kpi2, kpi3 = st.columns(3)
-    kpi1.metric("Dernière prévision",      f"{forecast['yhat'].iloc[-1]:.2f}")
-    kpi2.metric("Moyenne prévision (30j)", f"{forecast['yhat'].iloc[-30:].mean():.2f}")
-    kpi3.metric("Max prévision",           f"{forecast['yhat'].max():.2f}")
+    if future_monthly.empty:
+        st.info("Aucune prévision mensuelle disponible au-delà d'aujourd'hui.")
+    else:
+        # Calcul moyenne/jour et intervalles de confiance (±rmse × jours du mois)
+        future_monthly = future_monthly.copy()
+        future_monthly['days_in_month'] = future_monthly['month'].apply(
+            lambda p: p.to_timestamp().days_in_month
+        )
+        future_monthly['moyenne_jour'] = future_monthly['yhat'] / future_monthly['days_in_month']
+        future_monthly['lower'] = (future_monthly['yhat'] - rmse * future_monthly['days_in_month']).clip(lower=0)
+        future_monthly['upper'] = future_monthly['yhat'] + rmse * future_monthly['days_in_month']
 
-# =========================
-# ✅ SAUVEGARDE SESSION_STATE pour la page Comparaison
-# =========================
+        fig_monthly = go.Figure()
+        fig_monthly.add_trace(go.Bar(
+            x=future_monthly['month_str'],
+            y=future_monthly['yhat'].round(0),
+            name='Total prévu',
+            marker_color='#6c63ff',
+            opacity=0.85,
+        ))
+        fig_monthly.update_layout(
+            template="plotly_white",
+            xaxis_title="Mois",
+            yaxis_title="Total prévu (quantité)",
+            height=420,
+            hovermode="x unified",
+            margin=dict(l=0, r=0, t=20, b=0),
+            bargap=0.3,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        st.plotly_chart(fig_monthly, use_container_width=True)
+
+        display_df = future_monthly[['month_str', 'yhat', 'moyenne_jour', 'lower', 'upper']].copy()
+        display_df.columns = ['Mois', 'Total prévu', 'Moyenne/jour', 'Borne basse', 'Borne haute']
+        display_df[['Total prévu', 'Moyenne/jour', 'Borne basse', 'Borne haute']] = \
+            display_df[['Total prévu', 'Moyenne/jour', 'Borne basse', 'Borne haute']].round(2)
+        csv = display_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            "📥 Exporter les prévisions mensuelles (CSV)",
+            data=csv,
+            file_name="previsions_mensuelles_arima.csv",
+            mime="text/csv"
+        )
+
 sess_key = f"arima_{product}_{depot_id}"
 st.session_state[sess_key] = {
-    "MAE":      mae,
-    "RMSE":     rmse,
-    "MAPE":     mape,
-    "R2":       r2,
-    "quality":  label,
-    "future":   forecast[['ds', 'yhat']].copy(),
-    "product":  product,
-    "depot_id": depot_id,
+    "MAE":       mae,
+    "RMSE":      rmse,
+    "MAPE":      mape,
+    "R2":        r2,
+    "quality":   label,
+    "future":    forecast[['ds', 'yhat']].copy(),
+    "product":   product,
+    "depot_id":  depot_id,
     "depot_sel": depot_sel,
-    
-    "freq": freq_label,  # "journalière" ou "hebdomadaire"
+    "freq":      freq_label,
 }
