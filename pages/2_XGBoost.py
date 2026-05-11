@@ -10,6 +10,8 @@ from xgboost import XGBRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import warnings
 from utils import get_connection, sidebar_filters
+from auth import require_auth
+require_auth("XGBoost")
 
 warnings.filterwarnings("ignore")
 

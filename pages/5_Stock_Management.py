@@ -5,6 +5,8 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from utils import get_connection
+from auth import require_auth
+require_auth("Stock Management")
 
 st.title(" Stock Management")
 st.caption("Sélection automatique du meilleur modèle par produit · Analyse stock · Alertes rupture / surstock")

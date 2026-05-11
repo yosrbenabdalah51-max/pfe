@@ -10,7 +10,8 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import numpy as np
 import warnings
 from utils import get_connection, sidebar_filters
-
+from auth import require_auth
+require_auth("ARIMA")
 warnings.filterwarnings("ignore")
 
 st.set_page_config(page_title="Prévision ARIMA", page_icon="🟢")
