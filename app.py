@@ -50,227 +50,6 @@ section[data-testid="stSidebar"][aria-expanded="false"]:hover {
 """, unsafe_allow_html=True)
 
 # =========================
-# Dictionnaire ref_product -> nom (source directe table product)
-# =========================
-PRODUCT_NAMES = {
-    8:"Aloe Vera Gel legacy",9:"Aftershave",10:"Argan Oil",11:"Scented Argan Oil",
-    12:"Shower Gel cerise",13:"Shower Gel Peche",14:"Shower Gel Grenade",
-    15:"Cherry Hand Cream",16:"Peach Hand Cream",17:"Cleansing Gel legacy",
-    18:"Body Lotion",19:"Face Cream",20:"Repair Cream",21:"Makeup Remover Milk",
-    22:"Anti-Hair Loss Shampoo",23:"Aloe Soap legacy",24:"Argan Soap",
-    25:"Pomegranate Hand Cream",26:"Cherry Foot Cream",27:"Peach Foot Cream",
-    28:"Pomegranate Foot Cream",29:"Hair Mask",30:"Cherry Lip Balm",
-    31:"Peach Lip Balm",32:"Pomegranate Lip Balm",33:"Soothing Cream",
-    47:"Baby Gentle Soap",48:"Cleansing Milk",49:"Diaper Cream",
-    50:"Eau de Toilette",51:"Baby Shampoo",55:"Anti-Irritation Cream",
-    57:"Roll-On Ocean",58:"Roll-On Vanille",59:"Slimming Gel",
-    60:"Body Mist Berry",69:"Mosquito Repellent",72:"Shower Gel Berry(legacy)",
-    73:"Invisible Sunscreen",74:"Sun Milk",78:"Six Cream Beige Abricot",
-    79:"Styling Gel",109:"Perfume Fly Femme",110:"Perfume Fly Homme",
-    111:"Night Cream",112:"Oily Hair Shampoo",113:"Dry Hair Shampoo",
-    114:"Normal Hair Shampoo",115:"30 ml Eclat d'or",116:"30 ml Homme Moderne",
-    139:"Aloe Vera Pulp",140:"No Stress",141:"Anti Acne",142:"Anti Dark Circle",
-    143:"Appetite Suppressant legacy",151:"Slimy 3 legacy",152:"Max Maca legacy",
-    172:"Miracle Cream",173:"Push Up Cream",176:"Spirulina legacy",
-    177:"Shower Gel Ocean",178:"Shower Gel Vanille",179:"Dental Gel",
-    180:"Mouthwash",181:"Spray Deodorant Pieds",182:"Shower Gel Citron",
-    183:"Six Cream Teint Clair",184:"Body Mist Vanille",185:"Plain Aloe Vera Pulp",
-    186:"Honey Aloe Vera Pulp",187:"Royal Jelly",188:"Super Moisturizing Hand Cream",
-    189:"Foot Cream",190:"Honey & Wheat Bran Soap (legacy)",191:"3G",
-    192:"Immunity Plus",193:"Anti-Dandruff Shampoo",230:"Slimming Gel 200ml legacy",
-    238:"Soothing Cream 200 ml",240:"Intimate Wash legacy",250:"Miracle Soap",
-    253:"Exfoliating Mask",254:"Catalog",258:"Notepad",259:"Tester Eclat d'or",
-    260:"Tester Fly Femme",261:"Tester Fly Homme",262:"Tester Homme Moderne",
-    263:"Sac Lumina petit format",268:"Sac Lumina grand format",
-    273:"Dark Spot Cream legacy",274:"1000 Flyer Lumina",275:"Pen Lumina",
-    290:"Light Foundation",291:"Rose Foundation",295:"Lip Balm",
-    297:"Concealer",298:"Eyeliner",303:"Perfume Mister Lumina",
-    304:"Perfume Miss Lumina",305:"Small Bag",306:"Medium Bag",
-    315:"Micellar Water",316:"Shower Gel Agrumes",317:"Roll-On Agrumes",
-    318:"Sublime Skin",319:"Total Glow",321:"Kohl Pencil",
-    322:"Vernis V3",323:"Vernis V1",324:"Vernis V2",325:"Vernis V4",
-    326:"Vernis V5",327:"Vernis V6",328:"Vernis V7",329:"Vernis V8",
-    330:"Vernis V9",331:"Vernis V10",332:"Vernis V11",333:"Vernis V12",
-    334:"Perfume L'Extrème",335:"Perfume Free Spirit",336:"Perfume Mystery Girl",
-    337:"Perfume Glamour",338:"Perfume Gentleman",339:"Perfume Harem",
-    341:"EYESHADOW",343:"Key Ring Lumina",344:"Bracelet Lumina",345:"Large Bag",
-    351:"Tester Perfume Miss Lumina",352:"Tester Perfume Mister Lumina",
-    353:"Tester Gentleman",354:"Tester Glamour",355:"Tester Free Spirit",
-    356:"Tester L'Extrème",357:"Tester Harem",358:"Tester Mystery Girl",
-    365:"Gift Box Beauté Lumina",366:"Tester Crème de nuit",
-    374:"Tester Sachet Six Cream Clair",375:"Tester apaisante",
-    377:"Tester Crème Anti Tache",382:"Tester Sachet Six Cream Beige Abricot",
-    383:"Tester fond de teint clair",384:"Vernis V13",385:"Vernis V14",
-    386:"Vernis V15",387:"Vernis V16",388:"Vernis V17",389:"Vernis V18",
-    390:"Vernis V19",391:"Vernis V20",392:"Vernis V21",393:"Vernis V22",
-    394:"Vernis V23",395:"Eclat D'or 100 ml",396:"Homme Moderne 100 ml",
-    442:"T-Shirt Lumina (L)",443:"T-Shirt Lumina (M)",444:"T-Shirt Lumina (S)",
-    459:"T-Shirt Lumina (XL)",460:"T-Shirt Lumina (XXL)",
-    461:"Mini Miracle Cream legacy",485:"Wall Calendar",486:"Desk Calendar",
-    495:"Oriental Soap Gift Set",496:"Day Cream",509:"BB Cream",515:"Vernis V24",
-    538:"Body Cream L'Extrème",539:"Body Cream Glamour",542:"Body Cream Mystery Girl",
-    543:"Body Cream Harem",547:"Nail Polish Display",548:"Lipstick 01",
-    549:"Lipstick 02",550:"Lipstick 03",551:"Lipstick 04",552:"Lipstick 05",
-    553:"Lipstick 06",554:"Body Cream Gentleman",555:"Body Cream Free spirit",
-    560:"Body Cream Mister",561:"Body Cream Fly Homme",562:"Body Cream Fly Femme",
-    591:"Magic Pen 1",592:"Magic Pen 2",593:"Eyebrow 1",594:"Eyebrow 2",
-    595:"Magic Pen 3",596:"Very Dry & Damaged Foot Cream",597:"Royal Butter 30 ML",
-    598:"Body Cream Miss",599:"Body Cream Homme Moderne",600:"Body Cream Eclat d'Or",
-    607:"Badge Lumina",611:"Business Card Lumina",616:"Sharpener",
-    617:"Planner Lumina 2019",625:"Pouch Noire",627:"Shea Butter Soap",
-    629:"Blue Eye Liner",630:"Green Eye Liner",631:"Sky Blue Eye Pencil",
-    632:"Braided Soap",635:"Gift Box Lumina Pour Cadeau",
-    636:"Body Mist Sweet Carambola",637:"Body Mist Apple Pineapple",
-    638:"Body Mist Queen Flower",639:"Blue Eye Pencil",640:"Green Eye Pencil",
-    647:"Body Mist Fruit Combo",649:"Body Mist Crunchy Caramel",
-    650:"Shower Gel Spicy",651:"Shower Gel Fleur D'oranger",653:"Oil Replacement",
-    655:"Shower Gel Aloe Vera",656:"Shower Gel Oriental",657:"Shower Gel CoCo",
-    658:"Shower Gel Pivoine",660:"Ivory Beige Foundation",661:"Wheat Beige Foundation",
-    662:"Rose Beige Foundation",663:"Shower Gel Berry",
-    672:"SO Matte Lipstick R1",673:"SO Matte Lipstick R2",674:"SO Matte Lipstick R3",
-    675:"SO Matte Lipstick R4",676:"SO Matte Lipstick R5",677:"SO Matte Lipstick R6",
-    678:"SO Matte Lipstick R7",679:"SO Metallic Lipstick R8",680:"SO Metallic Lipstick R9",
-    681:"Mascara Long Lash Vegan",682:"Mascara Sensitive",696:"Gift Box Bonne Fête",
-    698:"Notebook",732:"Aloe Vera Gel",733:"Spirulina",734:"Slimy 3",735:"Max Maca",
-    759:"Hand Cream",760:"Eco Bag Lumina (Petit)",761:"Eco Bag Lumina (Moyen)",
-    762:"Eco Bag Lumina (Grand)",763:"Intimate Wash",764:"Honey & Wheat Bran Soap",
-    765:"Appetite Suppressant",766:"Black Soap",770:"Cleansing Gel",
-    771:"Aloe Vera Soap",772:"Sanitizer Gel",774:"Test Product",
-    777:"Pouch Multicolore",778:"Soothing Cream New",
-    779:"20 Flyer Promo Déc 2024",780:"20 Flyer promo Aout 2020",
-    781:"Silver Antibacterial Liquid Soap 500ml",782:"Dark Spot Cream",
-    809:"Deo ROSE",810:"Deo ROUGE BORDEAUX",811:"Deo MARRON",
-    812:"Deo ORANGER",813:"Deo VERT",849:"MINI Miracle Cream",
-    850:"Satchel Saint Valentin",851:"Wish Box Lumina",
-    873:"Color Noir Naturel 1.0",874:"Color Blond Foncé 6.0",
-    875:"Color Blond Naturel 7.0",876:"Color Blond Clair 8.0",
-    877:"Color Blond Très Clair 9.0",878:"Color Blond Extra Clair 10.0",
-    879:"Color Blond Naturel Cendré 7.01",880:"Color Blond Noisette 7.83",
-    881:"Color Châtain Clair Rouge 5.55",916:"Silver Antibacterial Wash Gel 100ml",
-    917:"Date Bites",918:"Royal Butter 50ml",
-    933:"So Perfect Foundation Beige Vanille",934:"So Perfect Foundation Beige Sablé",
-    935:"So Perfect Foundation Beige Peachy",936:"So Perfect Foundation Naturel Doré",
-    937:"So Perfect Foundation Beige Doré",938:"So Perfect Foundation Beige Abricot",
-    939:"So Perfect Foundation Beige Halé",940:"So Perfect Foundation Nude",
-    941:"So Perfect Foundation Naturel Café",942:"So Perfect Foundation Moca",
-    952:"Men's Day Cream",953:"Men's Styling Cream",954:"Shower Milk Miracle",
-    955:"Tinted Mineral Sunscreen",956:"Gentle Soap",957:"Perfume Pink Collection",
-    958:"Deodorant SILVER POWER MEN",959:"Perfume Actor",960:"Perfume Pure Ivory",
-    961:"Perfume Black Mirror",962:"Mascara ULTRA VOLUME M3",963:"Perfume BOY",
-    964:"Perfume GIRL",965:"Tester Perfume BOY",966:"Tester Perfume GIRL",
-    994:"Perfume Oriental For Women",995:"Perfume Oriental For Men",
-    1047:"Eyebrow 3",1060:"Gift Box Je t'aime",1133:"Perfume Velvet Bloom",
-    1172:"Tinted Mineral Sunscreen T1",1173:"Tinted Mineral Sunscreen T2",
-    1174:"Perfume Nude collection",1181:"Lumina Beauty Bag",
-    1233:"DELIGHT LIP LINER N°1",1234:"DELIGHT LIP LINER N°2",
-    1235:"DELIGHT LIP LINER N°3",1236:"DELIGHT LIP LINER N°4",
-    1237:"DELIGHT LIP LINER N°5",1238:"DELIGHT LIP LINER N°6",
-    1262:"Perfume Apricot Collection",1266:"Shower Milk Soft Sensation",
-    1267:"Shower Milk Fresh Sensation",1268:"Roll-On Miracle",
-    1269:"Ocean Bloom Hand Cream",1270:"Flower Bloom Hand Cream",
-    1271:"Oriental Bloom Hand Cream",1272:"Care And Repair Shampoo",
-    1273:"Care And Repair Mask",1274:"Lipgloss MAT 1",1275:"Lipgloss MAT 2",
-    1276:"Lipgloss MAT 3",1277:"Lipgloss MAT 4",1278:"Lipgloss MAT 5",
-    1279:"Lipgloss Semi MAT 1",1280:"Lipgloss Semi MAT 2",1281:"Lipgloss Semi MAT 3",
-    1282:"Lipgloss Semi MAT 4",1283:"Lipgloss Semi MAT 5",
-    1284:"Lipgloss Brillant 1",1285:"Lipgloss Brillant 2",1286:"Lipgloss Brillant 3",
-    1287:"Body Lotion Sweet Carambola",1288:"Body Lotion Queen Flower",
-    1289:"Body Lotion Crunchy Caramel",1290:"Multivitamins & Minerals",
-    1291:"Sleep & Zen",1292:"Concealer CN1",1293:"Concealer CN2",
-    1433:"Pouch Rosado",1434:"Jute Travel Bag",1435:"Croco Make-UP Bag",
-    1461:"Pin Lumina",1462:"Shower Gel Mojito 100ml",
-    1475:"Wellness Keratin for Hair & Nails",1560:"Gift Box Gentlemen",
-    1561:"Gift Box Harem",1563:"Body Lotion Harem",1564:"Shower Gel Gentleman",
-    1565:"So Perfect Foundation Caramel",1566:"So Perfect Foundation Cappuccino",
-    1567:"So Perfect Foundation Cannelle",1568:"So Perfect Foundation Noisette",
-    1569:"So Perfect Foundation Chocolat",1627:"Roll-On Ocean éco",
-    1628:"Roll-On Refill Ocean éco",1629:"Roll-On Vanille éco",
-    1630:"Roll-On Refill Vanille éco",1641:"Roll-On Miracle éco",
-    1642:"Roll-On Refill Miracle éco",1643:"Lumina Vanity Case",
-    1644:"Trendy Bag Lumina",1646:"Black Box Lumina",
-    1647:"Gift Box Déco Florale",1648:"Gift Box Déco Orientale",
-    1649:"Gift Box All You Need Is Love",1650:"Gift Box Blacky",
-    1659:"Roll-On Fresh Sensation éco",1660:"Roll-On Refill Fresh Sensation éco",
-    1661:"Roll-On Soft Sensation éco",1662:"Roll-On Refill Soft Sensation éco",
-    1663:"Shower Gel Mangue Papaye 100ml",1664:"Intense Care Lip Balm",
-    1725:"Roll-On Agrumes éco",1726:"Roll-On Refill agrumes éco",
-    1790:"Mascara Faux Cils",1797:"Gift Box PURE MIRROR",1807:"Backpack Lumina",
-    1849:"Shower Gel Wood Violet 100ml",1910:"Orange Beach Bag",
-    1911:"White Beach Bag",1912:"Green Beach Bag",1913:"Pink Beach Bag",
-    1955:"Refreshing Mist",1956:"Hair Protection Oil",1957:"Invisible Sun Milk",
-    2016:"Body Mist Shiny Vanilla",2017:"INSTANT GLOW Glitter Dry Oil",
-    2029:"Sun Protect Invisible Sunscreen",2036:"Hello Ocean",
-    2037:"Hello Vanille",2038:"Hello Miracle",
-    2062:"HYDRA-DEEP Cleansing Mousse",2063:"HYDRA-DEEP Face Serum",
-    2064:"HYDRA-DEEP Face Cream",2065:"Body Lotion Crunchy Caramel 150ml",
-    2066:"Body Lotion Queen Flower 150ml",2067:"Body Lotion Sweet Carambola 150ml",
-    2119:"Shower Gel ORIENTAL 400ml",2120:"Shower Gel MOJITO 400ml",
-    2121:"Shower Gel MANGUE & PAPAYE 400ml",2122:"Shower Gel COTTON BLOOM 400ml",
-    2123:"Shower Gel OCEAN 400ml",2124:"Shower Gel MELON GOURMAND 400ml",
-    2125:"Shower Gel VANILLE 400ml",2126:"Shower Gel SWEET CITRUS 400ml",
-    2127:"Shower Gel Cocktail COCO 400ml",2128:"Shower Gel WOOD VIOLET 400ml",
-    2129:"Shower Gel VERA GREEN 400ml",2130:"Shower Gel FRESH MARINE ICE 400ml",
-    2148:"Shower Gel BERRY 400ml",2155:"Shampoo Honeydew Family care",
-    2156:"Conditioner Honeydew Family care",2157:"Hair Serum Honeydew Family Style",
-    2160:"Argan Oil 30ml",2163:"SO Glam Lipstick R10",2164:"SO Glam Lipstick R11",
-    2165:"SO Glam Lipstick R12",2166:"SO Glam Lipstick R13",2167:"SO Glam Lipstick R14",
-    2168:"SO Glam Lipstick R15",2169:"SO Glam Lipstick R16",
-    2176:"Honeydew Hand Cream",2177:"Honeydew Foot Cream",
-    2256:"Body Butter FRESH RELAX TIME",2257:"Body Butter FRUITED RELAX TIME",
-    2270:"Invisible Sun Fluid",2291:"Beach Towel Sun protect",
-    2303:"Shower Gel RAFRAÎCHISSANT 100ml",2353:"Cleansing Micellar Water",
-    2357:"Beach Bag Sun protect",2385:"Perfume L'ECLAT D'OR 50ml",
-    2386:"Perfume Homme Moderne 50ml",2391:"Miracle Massage Soap",
-    2392:"Sun Protect Tinted Mineral T1",2393:"Sun Protect Tinted Mineral T2",
-    2465:"Deodorant Floral Wood",2466:"Deodorant Floral Fresh",
-    2467:"Cellulite Reducer Gel",2468:"Deodorant Gourmet Flower",
-    2469:"Deodorant Balsamic Fruity",2470:"Deodorant Aloe Aqua",
-    2471:"Relaxing Cream 100ml",2498:"Eco Bag Lumina Mini A",
-    2499:"Eco Bag Lumina Mini B",2540:"Fortifying Hair Mask Honeydew",
-    2541:"Sublimating Hair Bath Honeydew",
-    2566:"Maison Lumina AUDACE Homme",2567:"Maison Lumina INSPIRATION Femme",
-    2612:"Omega-3",2613:"Tri Maca",2614:"Ashwagandha",
-    2627:"Shower Gel Miracle 400ml",2630:"Pure Defense Mosquito Repellent",
-    2631:"Healthy Snack Dattes-Amandes",2632:"Healthy Snack Dattes-Noix coco",
-    2633:"7X Fibre Psyllium",2634:"7X Protein Chocolat",2635:"7X Protein Biscuit",
-    2636:"7X GARCINIA+",2637:"7X Slim Boost",2638:"Collagen Beauty",
-    2641:"Eco Bag Lumina Mini C",2642:"Shaker",
-    2647:"Maison Lumina VELORIA Femme",2648:"Maison Lumina ALURA Femme",
-    2649:"Maison Lumina ALDAN Homme",2650:"Maison Lumina VULKANIS Homme",
-    2651:"Bath Bag Lumina",2652:"Highlight Kit",
-    2653:"BOX 7X CHOCOLAT",2654:"BOX 7X BISCUIT",
-    2663:"Gift Box Heart",2672:"Sun Protect Kids Roll-On",
-    2676:"Perfume INSOLITE",2677:"Hair Protection Cream",
-    2678:"Body Mist PISTACHIO CRUSH",2679:"Body Mist SUGAR KISS",
-    2682:"7x Weight Management Biscuit",2683:"7x Weight Management Chocolat",
-    2732:"Calypso - Gift Box Hydratant",2733:"Artemis - Gift Box Peau Nette",
-    2734:"Aphrodite - Gift Box Glow Up",2735:"Iris - Gift Box Essentiel",
-    2737:"Gift Box Apollo",2738:"Whitening Dental Gel",
-    2739:"Comfort Mouthwash",2740:"Freshness Mouthwash",
-    2741:"Cherry Tinted Intense Lip Balm",2742:"Body Butter SUGAR KISS",
-    2743:"Soft Bare Lips Balm",2744:"Soft Pink Lips Balm",
-    2745:"Repairing Lipid Cream CICAVEA",
-    2747:"Reed Diffuser Pacific Rainforest",2748:"Reed Diffuser Bombei Nights",
-    2749:"Fabric Freshener Clean & Fresh",2750:"Fabric Freshener Cuties & Fresh",
-    2751:"Candle Golden Eye Strip",2752:"Candle Golden Eye Dot",
-    2787:"Flawless Touch Concealer 01",2788:"Flawless Touch Concealer 02",
-    2789:"Flawless Touch Concealer 03",2791:"MAISON LUMINA BLACK VELOUR DE ROSE",
-    2792:"MAISON LUMINA BLACK MAJESTIC ABSOLU",2793:"MAISON LUMINA BLACK OUD AMBRÉ",
-    2807:"Shower Gel Mango Rush 400ml",2806:"Shower Gel Iced Berries 400ml",
-    2808:"Shower Gel Salted Caramella 400ml",2809:"Glitter Dry Oil Glowy Monoi",
-    2810:"Lait de douche Glowy Monoi",2814:"Mist Glowy Monoi",
-    2815:"Mist Tropical Garden",2816:"Mist Berries Garden",
-    2817:"Flawless Touch Foundation Warm Vanilla",2818:"Flawless Touch Foundation Cool Ivory",
-    2819:"Flawless Touch Foundation Neutral Beige",2820:"Flawless Touch Foundation Warm Sand",
-    2821:"Flawless Touch Foundation Soft Praline",2822:"Flawless Touch Foundation Bronze Caramel",
-    2823:"Flawless Touch Face Primer",
-}
-
-def get_product_label(ref_id):
-    nom = PRODUCT_NAMES.get(int(ref_id))
-    return f"#{int(ref_id)} — {nom}" if nom else f"#{int(ref_id)}"
-
-# =========================
 # Dépôts exclus
 # =========================
 EXCLUDED_DEPOT_IDS = {8, 41, 57}
@@ -288,6 +67,7 @@ def load_data():
                    s.quantity, s.price, s.depot_id, s.date_time,
                    d.name        AS depot_name,
                    c.name        AS country_name,
+                   p.name        AS product_name,
                    p.sub_category_id,
                    cat.category_name,
                    cat.sub_category_name
@@ -305,14 +85,23 @@ def load_data():
         df['year']        = df['date_time'].dt.year.astype(str)
         df['month']       = df['date_time'].dt.to_period('M').astype(str)
         df['dayofweek']   = df['date_time'].dt.day_name()
-        # Nom du produit depuis le dictionnaire local (100% fiable)
-        df['product_name'] = df['ref_product'].map(PRODUCT_NAMES).fillna('Inconnu')
+        # Nom du produit depuis la base de données directement
+        df['product_name'] = df['product_name'].fillna('Inconnu')
         return df
     except Exception as e:
         st.error(f"⚠️ Erreur : {e}")
         st.stop()
 
 df = load_data()
+
+# =========================
+# Map ref_product -> product_name depuis les données DB
+# =========================
+PRODUCT_NAMES_DB = df.drop_duplicates('ref_product').set_index('ref_product')['product_name'].to_dict()
+
+def get_product_label(ref_id):
+    nom = PRODUCT_NAMES_DB.get(int(ref_id), 'Inconnu')
+    return f"#{int(ref_id)} — {nom}" if nom and nom != 'Inconnu' else f"#{int(ref_id)}"
 
 # =========================
 # SIDEBAR
@@ -326,9 +115,8 @@ product_rank_sb = (df.groupby('ref_product')['total']
                    .sum().reset_index()
                    .sort_values('total', ascending=False))
 
-# Label: "#238 — Soothing Cream 200 ml  (💰 12,345,678)"
 def make_sidebar_label(row):
-    nom = PRODUCT_NAMES.get(int(row['ref_product']), 'Inconnu')
+    nom = PRODUCT_NAMES_DB.get(int(row['ref_product']), 'Inconnu')
     return f"#{int(row['ref_product'])} — {nom}  (💰 {int(row['total']):,})"
 
 product_rank_sb["label"] = product_rank_sb.apply(make_sidebar_label, axis=1)
@@ -339,7 +127,6 @@ selected_label = st.sidebar.selectbox("Choisir un produit", labels_sb)
 if selected_label == "🌐 Tous les produits":
     selected_product = None
 else:
-    # Extraire l'ID numérique : "#238 — ..."  →  238
     selected_product = int(selected_label.split("—")[0].replace("#", "").strip())
 
 st.session_state["product"] = selected_product
@@ -388,7 +175,7 @@ if df_f.empty:
 # =========================
 st.markdown('<p class="big-title">📊 Tableau de Bord Analytique</p>', unsafe_allow_html=True)
 if selected_product:
-    nom_prod = PRODUCT_NAMES.get(selected_product, "Inconnu")
+    nom_prod = PRODUCT_NAMES_DB.get(selected_product, "Inconnu")
     st.success(f"Produit sélectionné : #{selected_product} — {nom_prod}")
 
 total_sales    = df_f['total'].sum()
@@ -438,7 +225,7 @@ with tab1:
                      .sort_values('total', ascending=False)
                      .head(5))
         top_table.insert(1, 'Nom du produit',
-                         top_table['ref_product'].apply(lambda x: PRODUCT_NAMES.get(x, 'Inconnu')))
+                         top_table['ref_product'].apply(lambda x: PRODUCT_NAMES_DB.get(x, 'Inconnu')))
         top_table = top_table.rename(columns={
             'ref_product': 'Référence',
             'total':       "Chiffre d'affaires",
@@ -453,7 +240,7 @@ with tab1:
         st.subheader("🥧 Répartition")
         top_products_named = top_products.copy()
         top_products_named['label'] = top_products_named['ref_product'].apply(
-            lambda x: PRODUCT_NAMES.get(x, f"#{x}")
+            lambda x: PRODUCT_NAMES_DB.get(x, f"#{x}")
         )
         fig3 = px.pie(top_products_named, names='label', values='total')
         st.plotly_chart(fig3, use_container_width=True)
@@ -466,7 +253,7 @@ with tab2:
     nb_cmd          = df_f['order_id'].nunique()
     best_country    = df_f.groupby('country_name')['total'].sum().idxmax()
     best_product_id = df_f.groupby('ref_product')['total'].sum().idxmax()
-    best_product_nm = PRODUCT_NAMES.get(best_product_id, f"#{best_product_id}")
+    best_product_nm = PRODUCT_NAMES_DB.get(best_product_id, f"#{best_product_id}")
     best_depot      = df_f.groupby('depot_name')['total'].sum().idxmax()
     best_year       = df_f.groupby('year')['total'].sum().idxmax()
 
@@ -509,7 +296,7 @@ with tab2:
                  .sum().reset_index()
                  .sort_values('quantity', ascending=True).tail(15))
         df_pq['label'] = df_pq['ref_product'].apply(
-            lambda x: PRODUCT_NAMES.get(x, f"#{x}")
+            lambda x: PRODUCT_NAMES_DB.get(x, f"#{x}")
         )
         fig_pq = px.bar(df_pq, x='quantity', y='label',
                         orientation='h', text='quantity',
@@ -544,7 +331,7 @@ with tab2:
              .groupby(['depot_name','ref_product'])['quantity']
              .sum().reset_index())
     df_dp['prod_label'] = df_dp['ref_product'].apply(
-        lambda x: PRODUCT_NAMES.get(x, f"#{x}")
+        lambda x: PRODUCT_NAMES_DB.get(x, f"#{x}")
     )
     depots   = df_dp['depot_name'].unique().tolist()
     produits = df_dp['prod_label'].unique().tolist()
@@ -614,3 +401,4 @@ with tab2:
         )
         fig_tree.update_layout(**TW, height=360, coloraxis_showscale=False)
         st.plotly_chart(fig_tree, use_container_width=True)
+        

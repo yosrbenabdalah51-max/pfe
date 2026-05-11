@@ -412,3 +412,48 @@ st.session_state[sess_key] = {
     "depot_sel": depot_sel,
     "freq":      freq_label,
 }
+# ============================================
+# 🤖 ANALYSE IA
+# ============================================
+from analyse.generateur import generer_analyse_xgboost
+
+st.divider()
+st.markdown("### 🤖 Analyse intelligente de cette page")
+col_btn = st.columns([2, 2, 2])
+with col_btn[1]:
+    btn = st.button(" Analyse Intelligente  ", use_container_width=True, type="primary")
+
+if btn:
+    filtres = {
+        "Produit"           : product or "Tous",
+        "Dépôt"             : depot_sel,
+        "Pays"              : selected_country,
+        "Fréquence"         : freq_label,
+        "Modèle"            : "XGBoost",
+    }
+
+    metriques = {
+        "MAE"                               : f"{mae:.2f}",
+        "RMSE"                              : f"{rmse:.2f}",
+        "MAPE"                              : f"{mape_val:.2f}%",
+        "R²"                                : f"{r2:.4f}" if not np.isnan(r2) else "N/A",
+        "Qualité du modèle"                 : label,
+        "Moyenne ventes/jour"               : f"{avg_daily_sales:.2f}",
+        "Nombre de points"                  : n_pts,
+        f"Prévision {next_month_label}"     : f"{next_month_qty:,.0f} unités",
+        f"Meilleur mois ({best_month_label})": f"{best_month_qty:,.0f} unités",
+        "Tendance générale"                 : trend,
+    }
+
+    with st.spinner("🧠 Analyse en cours..."):
+        analyse = generer_analyse_xgboost(filtres, metriques)
+
+    with st.container(border=True):
+        st.markdown(analyse)
+
+    st.download_button(
+        label="⬇️ Télécharger l'analyse",
+        data=analyse,
+        file_name=f"analyse_xgboost_{product}_{depot_sel}.txt",
+        mime="text/plain"
+    )

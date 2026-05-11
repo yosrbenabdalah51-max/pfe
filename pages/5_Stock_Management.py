@@ -422,3 +422,51 @@ with tab2:
         file_name=f"stock_journalier_{product}_{depot_id}_{horizon_days}j.csv",
         mime="text/csv"
     )
+    # ============================================
+# 🤖 ANALYSE IA
+# ============================================
+import sys, os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from analyse.generateur import generer_analyse_comparaison
+
+st.divider()
+
+col_btn = st.columns([2, 2, 2])
+with col_btn[1]:
+    btn = st.button("🤖 Analyse Intelligente", use_container_width=True, type="primary")
+
+if btn:
+    filtres = {
+        "Produit"          : str(product),
+        "Dépôt"            : str(depot_sel),
+        "Modèle utilisé"   : best_model_name.upper(),
+        "Horizon analyse"  : f"{horizon_days} jours",
+        "Délai réappro"    : f"{lead_time} jours",
+    }
+
+    metriques = {
+        "Stock actuel"              : f"{stock_actuel} unités",
+        "Demande prévue totale"     : f"{demand_total} unités",
+        "Moyenne journalière"       : f"{demand_moy_j} unités/jour",
+        "Stock fin horizon"         : f"{stock_fin_horizon} unités",
+        "Diagnostic"                : risque,
+        "Seuil sécurité"            : f"{safety_stock} unités",
+        "Stock optimal"             : f"{stock_optimal} unités",
+        "Point de réappro (ROP)"    : f"{reorder_point} unités",
+        "Stock maximum"             : f"{stock_max} unités",
+        "Action recommandée"        : f"Commander {qte_cmd} unités" if qte_cmd > 0 else "Aucune commande requise",
+        "Excédent"                  : f"{excedent} unités" if excedent > 0 else "Aucun",
+    }
+
+    with st.spinner("🧠 Analyse en cours..."):
+        analyse = generer_analyse_comparaison(filtres, metriques)
+
+    with st.container(border=True):
+        st.markdown(analyse)
+
+    st.download_button(
+        label="⬇️ Télécharger l'analyse",
+        data=analyse,
+        file_name=f"analyse_stock_{product}_{depot_sel}.txt",
+        mime="text/plain"
+    )

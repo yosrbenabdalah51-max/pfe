@@ -399,3 +399,43 @@ if missing:
         + ", ".join(missing)
         + ". Lancez leurs pages respectives pour les inclure."
     )
+    # ============================================
+# 🤖 ANALYSE IA
+# ============================================
+from analyse.generateur import generer_analyse_comparaison
+
+st.divider()
+
+col_btn = st.columns([2, 2, 2])
+with col_btn[1]:
+    btn = st.button("🤖 Analyse Intelligente", use_container_width=True, type="primary")
+
+if btn:
+    filtres = {
+        "Produit"          : label_produit,
+        "Dépôt"            : depot_sel,
+        "Pays"             : selected_country,
+        "Meilleur modèle"  : best_model,
+    }
+
+    metriques = {}
+    for name, m in results.items():
+        metriques[f"{name} — R²"]   = fmt_r2(m["R2"])
+        metriques[f"{name} — MAPE"] = fmt_mape(m["MAPE"])
+        metriques[f"{name} — MAE"]  = f"{m['MAE']:.2f}"
+        metriques[f"{name} — RMSE"] = f"{m['RMSE']:.2f}"
+        metriques[f"{name} — Qualité"] = m["quality"]
+        metriques[f"{name} — Fréquence"] = m.get("freq", "journalière")
+
+    with st.spinner("🧠 Analyse en cours..."):
+        analyse = generer_analyse_comparaison(filtres, metriques)
+
+    with st.container(border=True):
+        st.markdown(analyse)
+
+    st.download_button(
+        label="⬇️ Télécharger l'analyse",
+        data=analyse,
+        file_name=f"analyse_comparaison_{label_produit}_{depot_sel}.txt",
+        mime="text/plain"
+    )
