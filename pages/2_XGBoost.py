@@ -10,9 +10,9 @@ from xgboost import XGBRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import warnings
 from utils import get_connection, sidebar_filters
+from holidays_utils import add_holiday_feature, get_holiday_info_text, resolve_country_code
 from auth import require_auth
 require_auth("XGBoost")
-
 warnings.filterwarnings("ignore")
 
 st.set_page_config(page_title="XGBoost Dashboard", page_icon="📊", layout="wide")
@@ -47,6 +47,12 @@ def prepare_and_smooth(df):
     return df_d.dropna(subset=['y']).reset_index(drop=True)
 
 df_model = prepare_and_smooth(df)
+
+# ── Jours fériés ──────────────────────────────
+country_code = resolve_country_code(selected_country or "FR")
+df_model = add_holiday_feature(df_model, country_code)
+st.caption(get_holiday_info_text(country_code))
+# ──────────────────────────────────────────────
 
 label_produit = f"{product or 'Tous'} / {depot_sel}"
 n_pts = len(df_model)
@@ -87,6 +93,9 @@ def create_features(df, lag_list, roll_wins):
     d['quarter']    = d['ds'].dt.quarter
     d['year']       = d['ds'].dt.year
     d['is_weekend'] = (d['dayofweek'] >= 5).astype(int)
+    # is_holiday doit déjà être dans d (ajouté avant l'appel)
+    if 'is_holiday' not in d.columns:
+        d['is_holiday'] = 0
     for lag in lag_list:
         d[f'lag_{lag}'] = d['y'].shift(lag)
     for w in roll_wins:
@@ -98,7 +107,7 @@ df_feat = create_features(df_model, LAG_LIST, ROLL_WINS).dropna().reset_index(dr
 
 FEATURE_COLS = (
     ['dayofweek', 'dayofmonth', 'dayofyear', 'weekofyear',
-     'month', 'quarter', 'year', 'is_weekend'] +
+     'month', 'quarter', 'year', 'is_weekend', 'is_holiday'] +
     [f'lag_{l}' for l in LAG_LIST] +
     [f'rolling_mean_{w}' for w in ROLL_WINS] +
     [f'rolling_std_{w}'  for w in ROLL_WINS]
@@ -160,7 +169,8 @@ avg_daily_sales = df_model['y'].mean()
 # Prévision Future
 # =========================
 @st.cache_data
-def make_future_forecast(_model, df_model_vals, df_model_dates, lag_list, roll_wins, feat_cols, rmse_val):
+def make_future_forecast(_model, df_model_vals, df_model_dates, lag_list, roll_wins, feat_cols, rmse_val, country_code_str):
+    from holidays_utils import add_holiday_feature
     history = pd.DataFrame({'ds': list(df_model_dates), 'y': list(df_model_vals)})
     last_date = pd.Timestamp(history['ds'].max())
     target = pd.Timestamp("2026-12-31")
@@ -170,6 +180,7 @@ def make_future_forecast(_model, df_model_vals, df_model_dates, lag_list, roll_w
     for fd in future_dates:
         tmp = pd.DataFrame({'ds': [fd], 'y': [np.nan]})
         extended = pd.concat([history, tmp], ignore_index=True)
+        extended = add_holiday_feature(extended, country_code_str)
         extended = create_features(extended, list(lag_list), list(roll_wins))
         row = extended.iloc[-1].copy()
         for col in list(feat_cols):
@@ -187,7 +198,7 @@ def make_future_forecast(_model, df_model_vals, df_model_dates, lag_list, roll_w
 with st.spinner("⏳ Génération des prévisions futures..."):
     forecast_future_df = make_future_forecast(
         model, tuple(df_model['y'].values), tuple(df_model['ds'].values),
-        tuple(LAG_LIST), tuple(ROLL_WINS), tuple(FEATURE_COLS), rmse
+        tuple(LAG_LIST), tuple(ROLL_WINS), tuple(FEATURE_COLS), rmse, country_code
     )
 
 # =========================
@@ -445,6 +456,8 @@ if btn:
         f"Prévision {next_month_label}"     : f"{next_month_qty:,.0f} unités",
         f"Meilleur mois ({best_month_label})": f"{best_month_qty:,.0f} unités",
         "Tendance générale"                 : trend,
+        "Jours fériés détectés (historique)" : int(df_model['is_holiday'].sum()),
+        "Pays (jours fériés)"                : country_code,
     }
 
     with st.spinner("🧠 Analyse en cours..."):

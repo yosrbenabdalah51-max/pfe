@@ -1,6 +1,5 @@
 import streamlit as st
 
-# ✅ PREMIER — avant tout
 st.set_page_config(
     page_title="Vision Analytics",
     page_icon="📊",
@@ -8,39 +7,19 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# ✅ imports APRÈS set_page_config
+from auth import require_auth, user_topbar
+require_auth("App")
+
+# ✅ Nom utilisateur + bouton déconnexion EN DEHORS du sidebar
+user_topbar()
+
 import pandas as pd
 import mysql.connector
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from utils import get_connection
-from auth import login_page, logout
 
-# =========================
-# AUTHENTIFICATION
-# =========================
-if not st.session_state.get("authenticated"):
-    login_page()
-    st.stop()
-
-# Bandeau utilisateur
-role = st.session_state.get("role")
-icon = st.session_state.get("icon")
-st.sidebar.markdown(f"""
-<div style="background:#1a1a2e;border-radius:12px;padding:12px;
-            text-align:center;border:1px solid #6c63ff;margin-bottom:16px">
-    <div style="font-size:24px">{icon}</div>
-    <div style="font-size:13px;font-weight:700;color:#6c63ff">{role}</div>
-</div>
-""", unsafe_allow_html=True)
-
-if st.sidebar.button("🚪 Déconnexion", use_container_width=True):
-    logout()
-
-# =========================
-# CSS
-# =========================
 st.markdown("""
 <style>
 [data-testid="stSidebar"] { transition: width 0.3s ease !important; }
@@ -136,9 +115,10 @@ def get_product_label(ref_id):
     return f"#{int(ref_id)} — {nom}" if nom and nom != 'Inconnu' else f"#{int(ref_id)}"
 
 # =========================
-# SIDEBAR
+# SIDEBAR — filtres uniquement, plus de déconnexion ici
 # =========================
 st.sidebar.header("🔎 Filtrage")
+st.sidebar.markdown("---")
 date_range = st.sidebar.date_input("Date", [df['date_time'].min(), df['date_time'].max()])
 
 st.sidebar.markdown("---")
@@ -152,6 +132,7 @@ def make_sidebar_label(row):
     return f"#{int(row['ref_product'])} — {nom}  (💰 {int(row['total']):,})"
 
 product_rank_sb["label"] = product_rank_sb.apply(make_sidebar_label, axis=1)
+
 labels_sb = ["🌐 Tous les produits"] + product_rank_sb["label"].tolist()
 selected_label = st.sidebar.selectbox("Choisir un produit", labels_sb)
 
@@ -233,6 +214,7 @@ card(col4, "VENTE MOYENNE",             f"{avg_sale:,.2f}")
 # =========================
 tab1, tab2 = st.tabs(["🏠 Vue Globale", "📊 Dashboard Analytique"])
 
+# ── TAB 1 : Vue Globale ──────────────────────────────────────────────
 with tab1:
     product_rank = df_f.groupby('ref_product')['total'].sum().reset_index()
     product_rank = product_rank.sort_values('total', ascending=False)
@@ -275,6 +257,7 @@ with tab1:
         fig3 = px.pie(top_products_named, names='label', values='total')
         st.plotly_chart(fig3, use_container_width=True)
 
+# ── TAB 2 : Dashboard Analytique ─────────────────────────────────────
 with tab2:
     COLORS = ['#6c63ff','#a78bfa','#f59e0b','#10b981','#f43f5e','#3b82f6','#8b5cf6']
     TW = dict(template="plotly_white", margin=dict(l=0,r=0,t=10,b=0))
@@ -324,7 +307,9 @@ with tab2:
         df_pq = (df_f.groupby('ref_product')['quantity']
                  .sum().reset_index()
                  .sort_values('quantity', ascending=True).tail(15))
-        df_pq['label'] = df_pq['ref_product'].apply(lambda x: PRODUCT_NAMES_DB.get(x, f"#{x}"))
+        df_pq['label'] = df_pq['ref_product'].apply(
+            lambda x: PRODUCT_NAMES_DB.get(x, f"#{x}")
+        )
         fig_pq = px.bar(df_pq, x='quantity', y='label',
                         orientation='h', text='quantity',
                         color='quantity', color_continuous_scale=['#ede9fe','#6c63ff'],
@@ -351,13 +336,15 @@ with tab2:
             legend=dict(orientation='h', y=1.05, x=0), bargap=0.3)
         st.plotly_chart(fig_pays, use_container_width=True)
 
-    st.markdown('<div class="dash-section">🏭 Vue Radar par dépôt</div>', unsafe_allow_html=True)
+    st.markdown('<div class="dash-section">🏭 Quantité par produit et dépôt — Vue Radar par dépôt</div>', unsafe_allow_html=True)
     top10_prod = (df_f.groupby('ref_product')['quantity']
                   .sum().nlargest(10).index.tolist())
     df_dp = (df_f[df_f['ref_product'].isin(top10_prod)]
              .groupby(['depot_name','ref_product'])['quantity']
              .sum().reset_index())
-    df_dp['prod_label'] = df_dp['ref_product'].apply(lambda x: PRODUCT_NAMES_DB.get(x, f"#{x}"))
+    df_dp['prod_label'] = df_dp['ref_product'].apply(
+        lambda x: PRODUCT_NAMES_DB.get(x, f"#{x}")
+    )
     depots   = df_dp['depot_name'].unique().tolist()
     produits = df_dp['prod_label'].unique().tolist()
 
@@ -370,15 +357,18 @@ with tab2:
         fig_radar.add_trace(go.Scatterpolar(
             r=vals_closed, theta=cats_closed,
             fill='toself', name=depot,
-            line=dict(color=COLORS[i % len(COLORS)], width=2), opacity=0.7
+            line=dict(color=COLORS[i % len(COLORS)], width=2),
+            opacity=0.7
         ))
-    fig_radar.update_layout(**TW, height=420,
+    fig_radar.update_layout(
+        **TW, height=420,
         polar=dict(
             radialaxis=dict(visible=True, gridcolor='#e5e7eb', linecolor='#e5e7eb'),
             angularaxis=dict(gridcolor='#e5e7eb', linecolor='#e5e7eb')
         ),
         legend=dict(orientation='h', y=-0.1, x=0.5, xanchor='center'),
-        showlegend=True)
+        showlegend=True
+    )
     st.plotly_chart(fig_radar, use_container_width=True)
 
     c3, c4 = st.columns([1, 2])
@@ -386,32 +376,39 @@ with tab2:
         st.markdown('<div class="dash-section">📦 Pack vs Standard</div>', unsafe_allow_html=True)
         df_pack = df_f.copy()
         df_pack['type'] = df_pack['is_pack'].apply(lambda x: 'Pack' if x > 0 else 'Standard')
-        df_pack_agg = df_pack.groupby('type').agg(ca=('total','sum'), qty=('quantity','sum')).reset_index()
+        df_pack_agg = df_pack.groupby('type').agg(
+            ca=('total','sum'), qty=('quantity','sum')
+        ).reset_index()
         fig_pack = go.Figure()
         fig_pack.add_trace(go.Pie(
             labels=df_pack_agg['type'], values=df_pack_agg['ca'],
             hole=0.55, marker=dict(colors=['#6c63ff','#f59e0b']),
-            textinfo='label+percent', textfont=dict(size=13),
+            textinfo='label+percent',
+            textfont=dict(size=13, family='Plus Jakarta Sans'),
             hovertemplate="<b>%{label}</b><br>CA: %{value:,.0f}<br>Part: %{percent}<extra></extra>"
         ))
         fig_pack.update_layout(**TW, height=360,
             annotations=[dict(text='Type', x=0.5, y=0.5,
-                             font=dict(size=14, color='#1a1a2e'), showarrow=False)])
+                             font=dict(size=14, color='#1a1a2e', family='Plus Jakarta Sans'),
+                             showarrow=False)])
         st.plotly_chart(fig_pack, use_container_width=True)
 
     with c4:
         st.markdown('<div class="dash-section">🌿 Treemap — Catégorie → Sous-catégorie → CA</div>', unsafe_allow_html=True)
         df_tree = df_f.dropna(subset=['category_name','sub_category_name']).copy()
         df_tree_agg = (df_tree.groupby(['category_name','sub_category_name'])
-                       .agg(ca=('total','sum'), qty=('quantity','sum')).reset_index())
-        fig_tree = px.treemap(df_tree_agg,
+                       .agg(ca=('total','sum'), qty=('quantity','sum'))
+                       .reset_index())
+        fig_tree = px.treemap(
+            df_tree_agg,
             path=['category_name', 'sub_category_name'],
             values='ca', color='ca',
             color_continuous_scale=['#ede9fe','#6c63ff','#4c1d95'],
-            custom_data=['qty'])
+            custom_data=['qty'], hover_data={'ca': True}
+        )
         fig_tree.update_traces(
             texttemplate="<b>%{label}</b><br>CA: %{value:,.0f}",
-            textfont=dict(size=12),
+            textfont=dict(size=12, family='Plus Jakarta Sans'),
             hovertemplate="<b>%{label}</b><br>CA: %{value:,.0f}<br>Qté: %{customdata[0]:,}<extra></extra>"
         )
         fig_tree.update_layout(**TW, height=360, coloraxis_showscale=False)

@@ -1,21 +1,24 @@
+import streamlit as st
+st.set_page_config(page_title="Prévision SARIMA", page_icon="🟣")
+
 import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-import streamlit as st
+from auth import require_auth
+require_auth("SARIMA")
+
 import pandas as pd
 import plotly.graph_objects as go
-from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.tsa.statespace.sarimax import SARIMAX
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import numpy as np
 import warnings
 from utils import get_connection, sidebar_filters
-from auth import require_auth
-require_auth("ARIMA")
+from holidays_utils import add_holiday_feature, get_holiday_info_text, resolve_country_code
 warnings.filterwarnings("ignore")
 
-st.set_page_config(page_title="Prévision ARIMA", page_icon="🟢")
-st.title("📈 Dashboard Prévision des Ventes - ARIMA")
+st.title("📈 Dashboard Prévision des Ventes - SARIMA")
 
 df, product, depot_id, depot_sel, date_range, selected_country = sidebar_filters()
 
@@ -40,6 +43,14 @@ def prepare_and_smooth(df):
 
 df_model = prepare_and_smooth(df)
 
+# ── Jours fériés → variable exogène réelle ────
+country_code = resolve_country_code(selected_country or "FR")
+df_model = add_holiday_feature(df_model, country_code)
+st.caption(get_holiday_info_text(country_code))
+n_holidays_train = int(df_model['is_holiday'].sum())
+st.info(f"📅 **{n_holidays_train} jour(s) férié(s)** détectés dans la série — "
+        f"ils sont intégrés comme **variable exogène** dans SARIMA.")
+
 label_produit = f"{product or 'Tous'} / {depot_sel}"
 n_pts = len(df_model)
 st.info(f"📅 [{label_produit}] Série lissée (journalière) — **{n_pts} points**")
@@ -50,12 +61,16 @@ if n_pts < MIN_POINTS:
     st.stop()
 
 if n_pts < 60:
-    df_model = df_model.set_index('ds').resample('W')['y'].sum().reset_index()
-    df_model = df_model.reset_index(drop=True)
+    df_model = (df_model.set_index('ds')
+                .resample('W')
+                .agg({'y': 'sum', 'is_holiday': 'max'})
+                .reset_index())
     st.info(f"🔁 Données agrégées par semaine ({len(df_model)} semaines)")
     freq_label = "hebdomadaire"
+    seasonal_period = 52
 else:
     freq_label = "journalière"
+    seasonal_period = 7
 
 n_pts = len(df_model)
 if n_pts < MIN_POINTS:
@@ -63,40 +78,88 @@ if n_pts < MIN_POINTS:
     st.stop()
 
 split_index = max(1, int(n_pts * 0.8))
-train_df = df_model.iloc[:split_index]
-test_df  = df_model.iloc[split_index:]
+train_df = df_model.iloc[:split_index].copy()
+test_df  = df_model.iloc[split_index:].copy()
 if len(test_df) == 0:
-    train_df = df_model.iloc[:-1]
-    test_df  = df_model.iloc[-1:]
+    train_df = df_model.iloc[:-1].copy()
+    test_df  = df_model.iloc[-1:].copy()
 
+# ── Recherche du meilleur ordre SARIMA ────────
 @st.cache_data
-def find_best_arima_order(train_y_tuple, small=False):
-    train_y = list(train_y_tuple)
-    best_aic, best_order = np.inf, (1, 1, 1)
-    for p in range(0, 3 if small else 4):
-        for d in range(0, 2):
-            for q in range(0, 2 if small else 3):
-                try:
-                    m = ARIMA(train_y, order=(p, d, q)).fit()
-                    if m.aic < best_aic:
-                        best_aic, best_order = m.aic, (p, d, q)
-                except: continue
-    return best_order
+def find_best_sarima_order(train_y_tuple, train_exog_tuple, s, small=False):
+    train_y    = list(train_y_tuple)
+    train_exog = np.array(train_exog_tuple).reshape(-1, 1)
+    best_aic, best_order, best_seasonal = np.inf, (1, 1, 1), (0, 0, 0)
+
+    p_range = range(0, 3)
+    d_range = range(0, 2)
+    q_range = range(0, 2 if small else 3)
+    P_range, D_range, Q_range = range(0, 2), range(0, 2), range(0, 2)
+
+    for p in p_range:
+        for d in d_range:
+            for q in q_range:
+                for P in P_range:
+                    for D in D_range:
+                        for Q in Q_range:
+                            if (p + d + q + P + D + Q) == 0:
+                                continue
+                            try:
+                                m = SARIMAX(
+                                    train_y,
+                                    exog=train_exog,
+                                    order=(p, d, q),
+                                    seasonal_order=(P, D, Q, s),
+                                    enforce_stationarity=False,
+                                    enforce_invertibility=False,
+                                ).fit(disp=False)
+                                if m.aic < best_aic:
+                                    best_aic      = m.aic
+                                    best_order    = (p, d, q)
+                                    best_seasonal = (P, D, Q)
+                            except Exception:
+                                continue
+    return best_order, best_seasonal
 
 is_small = n_pts < 60
-with st.spinner("🔍 Recherche du meilleur ordre ARIMA (p,d,q)..."):
-    best_order = find_best_arima_order(tuple(train_df['y'].values), small=is_small)
+with st.spinner("🔍 Recherche du meilleur ordre SARIMA (p,d,q)(P,D,Q)[s]..."):
+    best_order, best_seasonal = find_best_sarima_order(
+        tuple(train_df['y'].values),
+        tuple(train_df['is_holiday'].values),
+        s=seasonal_period,
+        small=is_small,
+    )
 
-st.success(f"✅ Meilleur ordre ARIMA : {best_order}")
+st.success(
+    f"✅ Meilleur ordre SARIMA : {best_order} × {best_seasonal}[{seasonal_period}]"
+    f"  —  jours fériés intégrés comme exogène"
+)
 
+# ── Entraînement + prédiction sur le test ─────
 @st.cache_data
-def train_arima(train_y_tuple, order, test_len):
-    model_fit = ARIMA(list(train_y_tuple), order=order).fit()
-    fc = model_fit.forecast(steps=test_len)
+def train_sarima(train_y_tuple, train_exog_tuple, test_exog_tuple,
+                 order, seasonal_order, s):
+    train_y    = list(train_y_tuple)
+    train_exog = np.array(train_exog_tuple).reshape(-1, 1)
+    test_exog  = np.array(test_exog_tuple).reshape(-1, 1)
+    model_fit  = SARIMAX(
+        train_y,
+        exog=train_exog,
+        order=order,
+        seasonal_order=(*seasonal_order, s),
+        enforce_stationarity=False,
+        enforce_invertibility=False,
+    ).fit(disp=False)
+    fc = model_fit.forecast(steps=len(test_exog), exog=test_exog)
     return np.array(fc.values if hasattr(fc, 'values') else fc)
 
-with st.spinner("⏳ Entraînement ARIMA..."):
-    test_preds = train_arima(tuple(train_df['y'].values), best_order, len(test_df))
+with st.spinner("⏳ Entraînement SARIMA..."):
+    test_preds = train_sarima(
+        tuple(train_df['y'].values),
+        tuple(train_df['is_holiday'].values),
+        tuple(test_df['is_holiday'].values),
+        best_order, best_seasonal, seasonal_period,
+    )
 
 y_true = test_df['y'].values
 y_pred = test_preds
@@ -107,24 +170,55 @@ r2   = r2_score(y_true, y_pred) if len(y_true) > 1 else float('nan')
 mask = y_true != 0
 mape = np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100 if mask.any() else float('nan')
 
-daily_avg = df_model['y'].mean()
+daily_avg         = df_model['y'].mean()
 daily_avg_display = daily_avg / 7 if freq_label == "hebdomadaire" else daily_avg
 mae_pct  = (mae  / daily_avg_display * 100) if daily_avg_display > 0 else float('nan')
 rmse_pct = (rmse / daily_avg_display * 100) if daily_avg_display > 0 else float('nan')
 
+# ── Prévisions futures avec exog jours fériés ─
 @st.cache_data
-def make_full_forecast(full_y_tuple, order, last_date, freq_label):
-    model_full   = ARIMA(list(full_y_tuple), order=order).fit()
+def make_full_forecast_sarima(full_y_tuple, full_exog_tuple, order, seasonal_order,
+                               s, last_date, freq_label, country_code):
+    full_y    = list(full_y_tuple)
+    full_exog = np.array(full_exog_tuple).reshape(-1, 1)
+
+    model_full = SARIMAX(
+        full_y,
+        exog=full_exog,
+        order=order,
+        seasonal_order=(*seasonal_order, s),
+        enforce_stationarity=False,
+        enforce_invertibility=False,
+    ).fit(disp=False)
+
     target       = pd.Timestamp("2026-12-31")
     freq         = 'W' if freq_label == "hebdomadaire" else 'D'
     future_steps = max(1, (target - last_date).days // (7 if freq == 'W' else 1))
-    future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=future_steps, freq=freq)
-    fc     = model_full.forecast(steps=future_steps)
+    future_dates = pd.date_range(
+        start=last_date + pd.Timedelta(days=1),
+        periods=future_steps,
+        freq=freq,
+    )
+
+    from holidays_utils import get_holidays_df
+    hdf = get_holidays_df(country_code)
+    holiday_dates = set(hdf["ds"].dt.normalize()) if not hdf.empty else set()
+    future_exog = np.array(
+        [1 if d.normalize() in holiday_dates else 0 for d in future_dates],
+        dtype=float,
+    ).reshape(-1, 1)
+
+    fc     = model_full.forecast(steps=future_steps, exog=future_exog)
     fc_arr = np.array(fc.values if hasattr(fc, 'values') else fc)
-    return pd.DataFrame({'ds': future_dates, 'yhat': fc_arr})
+    return pd.DataFrame({'ds': future_dates, 'yhat': fc_arr, 'is_holiday': future_exog.flatten()})
 
 with st.spinner("⏳ Génération des prévisions futures..."):
-    forecast = make_full_forecast(tuple(df_model['y'].values), best_order, df_model['ds'].max(), freq_label)
+    forecast = make_full_forecast_sarima(
+        tuple(df_model['y'].values),
+        tuple(df_model['is_holiday'].values),
+        best_order, best_seasonal, seasonal_period,
+        df_model['ds'].max(), freq_label, country_code,
+    )
 
 forecast['month'] = forecast['ds'].dt.to_period('M')
 monthly_forecast  = forecast.groupby('month')['yhat'].sum().reset_index()
@@ -139,7 +233,9 @@ next_month_qty   = future_monthly['yhat'].iloc[0]  if len(future_monthly) >= 1 e
 next_month_label = future_monthly['month_str'].iloc[0] if len(future_monthly) >= 1 else "—"
 best_month_qty   = future_monthly['yhat'].max()    if not future_monthly.empty else float('nan')
 best_month_label = future_monthly.loc[future_monthly['yhat'].idxmax(), 'month_str'] if not future_monthly.empty else "—"
-trend = "📈 Hausse" if len(future_monthly) >= 2 and future_monthly['yhat'].iloc[-1] > future_monthly['yhat'].iloc[0] else "📉 Baisse"
+trend = ("📈 Hausse" if len(future_monthly) >= 2
+         and future_monthly['yhat'].iloc[-1] > future_monthly['yhat'].iloc[0]
+         else "📉 Baisse")
 
 def get_quality(r2, mape):
     if r2 >= 0.85 and mape <= 10:   return "#28a745", "🟢 Excellent"
@@ -165,49 +261,79 @@ forecast_chart   = forecast[(forecast['ds'] >= chart_start) & (forecast['ds'] <=
 
 tab1, tab2, tab3 = st.tabs(["📈 Graphique", "📊 Performance", "📌 KPIs"])
 
+# =========================
+# TAB 1 — Graphique
+# =========================
 with tab1:
     st.subheader(f"Historique + Prévision — {label_produit} ({freq_label})")
     fig = go.Figure()
+
     if not train_chart.empty:
-        fig.add_trace(go.Scatter(x=train_chart['ds'], y=train_chart['y'],
+        fig.add_trace(go.Scatter(
+            x=train_chart['ds'], y=train_chart['y'],
             mode='lines', name='Train', line=dict(color='blue', width=1.5)))
+
     if not test_chart.empty:
-        fig.add_trace(go.Scatter(x=test_chart['ds'], y=test_chart['y'],
+        fig.add_trace(go.Scatter(
+            x=test_chart['ds'], y=test_chart['y'],
             mode='lines', name='Test (réel)', line=dict(color='orange', width=1.5)))
+
     if not test_preds_chart.empty:
-        fig.add_trace(go.Scatter(x=test_preds_chart.index, y=test_preds_chart.values,
+        fig.add_trace(go.Scatter(
+            x=test_preds_chart.index, y=test_preds_chart.values,
             mode='lines', name='Prédiction (test)', line=dict(color='purple', dash='dash', width=1.5)))
+
     if not forecast_chart.empty:
-        fig.add_trace(go.Scatter(x=forecast_chart['ds'], y=forecast_chart['yhat'],
+        fig.add_trace(go.Scatter(
+            x=forecast_chart['ds'], y=forecast_chart['yhat'],
             mode='lines', name='Prévision future', line=dict(color='green', width=2)))
-    fig.update_layout(xaxis_title="Date", yaxis_title="Quantité",
+
+    holidays_in_chart = df_model[
+        (df_model['is_holiday'] == 1) &
+        (df_model['ds'] >= chart_start) &
+        (df_model['ds'] <= chart_end)
+    ]
+    if not holidays_in_chart.empty:
+        fig.add_trace(go.Scatter(
+            x=holidays_in_chart['ds'], y=holidays_in_chart['y'],
+            mode='markers', name='Jour férié (historique)',
+            marker=dict(symbol='star', color='red', size=8),
+        ))
+
+    holidays_forecast = forecast_chart[forecast_chart['is_holiday'] == 1]
+    if not holidays_forecast.empty:
+        fig.add_trace(go.Scatter(
+            x=holidays_forecast['ds'], y=holidays_forecast['yhat'],
+            mode='markers', name='Jour férié (prévu)',
+            marker=dict(symbol='star', color='darkred', size=8, opacity=0.7),
+        ))
+
+    fig.update_layout(
+        xaxis_title="Date", yaxis_title="Quantité",
         xaxis=dict(range=[chart_start, chart_end]),
-        template="plotly_white", hovermode="x unified", height=500)
+        template="plotly_white", hovermode="x unified", height=500,
+    )
     st.plotly_chart(fig, use_container_width=True)
 
+# =========================
+# TAB 2 — Performance
+# =========================
 with tab2:
     st.subheader("Indicateurs de Performance du Modèle")
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("MAE",  f"{mae:.2f}",
-                help="Erreur absolue moyenne — comparez avec la moyenne journalière ci-dessous.")
-    col2.metric("RMSE", f"{rmse:.2f}",
-                help="Erreur quadratique — pénalise les grandes erreurs. Comparez avec la moyenne journalière.")
-    col3.metric("MAPE", f"{mape_val:.2f}%",
-                help="Erreur en % par rapport aux vraies valeurs.")
-    col4.metric("R²",   f"{r2:.4f}" if not np.isnan(r2) else "N/A",
-                help="Proportion de variance expliquée. Plus proche de 1 = meilleur modèle.")
-    col5.metric("Moy. vente / jour", f"{daily_avg_display:.2f}",
-                help="Référence pour interpréter MAE et RMSE : si MAE ≈ moyenne, le modèle est peu précis.")
+    col1.metric("MAE",  f"{mae:.2f}",  help="Erreur absolue moyenne.")
+    col2.metric("RMSE", f"{rmse:.2f}", help="Erreur quadratique — pénalise les grandes erreurs.")
+    col3.metric("MAPE", f"{mape_val:.2f}%", help="Erreur en % par rapport aux vraies valeurs.")
+    col4.metric("R²",   f"{r2:.4f}" if not np.isnan(r2) else "N/A", help="Proportion de variance expliquée.")
+    col5.metric("Moy. vente / jour", f"{daily_avg_display:.2f}", help="Référence pour interpréter MAE et RMSE.")
     st.caption(
         f"💡 MAE = **{mae_pct:.1f}%** de la vente moyenne journalière · "
         f"RMSE = **{rmse_pct:.1f}%** — "
         f"{'✅ Erreur faible, modèle précis' if mae_pct < 20 else '⚠️ Erreur élevée par rapport à la moyenne'}."
     )
 
-    # Comparaison MAE / RMSE vs moyenne journalière
     st.divider()
     st.markdown("#### 📊 Erreurs vs Moyenne des ventes journalières")
-
     mae_pct_of_avg  = (mae  / daily_avg_display * 100) if daily_avg_display > 0 else float('nan')
     rmse_pct_of_avg = (rmse / daily_avg_display * 100) if daily_avg_display > 0 else float('nan')
 
@@ -261,40 +387,32 @@ with tab2:
         </div>
         <p style="text-align:right; font-size:13px; color:gray;">MAPE = {mape_val:.2f}% &nbsp;|&nbsp; {mape_text}</p>
         """, unsafe_allow_html=True)
+
     st.divider()
-    if label == "🟢 Excellent":   st.success("✅ ARIMA est très bien adapté à ce produit !")
-    elif label == "🟡 Bon":       st.info("ℹ️ Bonne performance. ARIMA est fiable pour ce produit.")
-    elif label == "🟠 Moyen":     st.warning("⚠️ Performance moyenne. Essayez Prophet ou LSTM.")
-    else:                          st.error("❌ Performance faible. Essayez Prophet ou LSTM pour ce produit.")
+    if label == "🟢 Excellent":   st.success("✅ SARIMA est très bien adapté à ce produit !")
+    elif label == "🟡 Bon":       st.info("ℹ️ Bonne performance. SARIMA est fiable pour ce produit.")
+    elif label == "🟠 Moyen":     st.warning("⚠️ Performance moyenne. Essayez xgboost ou LSTM.")
+    else:                          st.error("❌ Performance faible. Essayez xgboost ou LSTM pour ce produit.")
 
 # =========================
-# TAB 3 — KPIs + Prévisions mensuelles (style XGBoost)
+# TAB 3 — KPIs
 # =========================
 with tab3:
     st.subheader("📌 KPIs Clés")
     k1, k2, k3 = st.columns(3)
-    k1.metric(
-        f"Prochain mois ({next_month_label})",
-        f"{next_month_qty:,.0f} unités",
-        help="Quantité totale prévue pour le mois qui vient."
-    )
-    k2.metric(
-        f"Meilleur mois prévu ({best_month_label})",
-        f"{best_month_qty:,.0f} unités",
-        help="Le mois avec la plus forte prévision sur toute la période future."
-    )
-    k3.metric(
-        "Tendance générale",
-        trend,
-        help="Comparaison entre la prévision du premier et du dernier mois disponible."
-    )
+    k1.metric(f"Prochain mois ({next_month_label})", f"{next_month_qty:,.0f} unités",
+              help="Quantité totale prévue pour le mois qui vient.")
+    k2.metric(f"Meilleur mois prévu ({best_month_label})", f"{best_month_qty:,.0f} unités",
+              help="Le mois avec la plus forte prévision sur toute la période future.")
+    k3.metric("Tendance générale", trend,
+              help="Comparaison entre la prévision du premier et du dernier mois disponible.")
+
     st.divider()
     st.subheader("📅 Prévisions par mois à venir")
 
     if future_monthly.empty:
         st.info("Aucune prévision mensuelle disponible au-delà d'aujourd'hui.")
     else:
-        # Calcul moyenne/jour et intervalles de confiance (±rmse × jours du mois)
         future_monthly = future_monthly.copy()
         future_monthly['days_in_month'] = future_monthly['month'].apply(
             lambda p: p.to_timestamp().days_in_month
@@ -313,12 +431,9 @@ with tab3:
         ))
         fig_monthly.update_layout(
             template="plotly_white",
-            xaxis_title="Mois",
-            yaxis_title="Total prévu (quantité)",
-            height=420,
-            hovermode="x unified",
-            margin=dict(l=0, r=0, t=20, b=0),
-            bargap=0.3,
+            xaxis_title="Mois", yaxis_title="Total prévu (quantité)",
+            height=420, hovermode="x unified",
+            margin=dict(l=0, r=0, t=20, b=0), bargap=0.3,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         )
         st.plotly_chart(fig_monthly, use_container_width=True)
@@ -331,11 +446,12 @@ with tab3:
         st.download_button(
             "📥 Exporter les prévisions mensuelles (CSV)",
             data=csv,
-            file_name="previsions_mensuelles_arima.csv",
+            file_name="previsions_mensuelles_sarima.csv",
             mime="text/csv"
         )
 
-sess_key = f"arima_{product}_{depot_id}"
+# ✅ CLÉ CORRIGÉE — maintenant cohérente avec Comparaison Modèles
+sess_key = f"sarima_{product}_{depot_id}"
 st.session_state[sess_key] = {
     "MAE":       mae,
     "RMSE":      rmse,
@@ -348,49 +464,48 @@ st.session_state[sess_key] = {
     "depot_sel": depot_sel,
     "freq":      freq_label,
 }
-# ============================================
+
+# =========================
 # 🤖 ANALYSE IA
-# ============================================
-import sys, os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# =========================
 from analyse.generateur import generer_analyse_arima
 
 st.divider()
 st.markdown("### 🤖 Analyse intelligente de cette page")
 col_btn = st.columns([2, 2, 2])
 with col_btn[1]:
-    btn = st.button(" Analyse Intelligente", use_container_width=True, type="primary")
+    btn = st.button("🤖 Analyse Intelligente", use_container_width=True, type="primary")
+
 if btn:
     filtres = {
-        "Produit"            : product or "Tous",
-        "Dépôt"              : depot_sel,
-        "Pays"               : selected_country,
-        "Fréquence"          : freq_label,
-        "Ordre ARIMA (p,d,q)": str(best_order),
+        "Produit"                 : product or "Tous",
+        "Dépôt"                   : depot_sel,
+        "Pays"                    : selected_country,
+        "Fréquence"               : freq_label,
+        "Ordre SARIMA (p,d,q)"    : str(best_order),
+        "Saisonnalité (P,D,Q)[s]" : f"{best_seasonal}[{seasonal_period}]",
     }
-
     metriques = {
-        "MAE"                               : f"{mae:.2f} ({mae_pct:.1f}% de la moyenne journalière)",
-        "RMSE"                              : f"{rmse:.2f} ({rmse_pct:.1f}% de la moyenne journalière)",
-        "MAPE"                              : f"{mape_val:.2f}%",
-        "R²"                                : f"{r2:.4f}" if not np.isnan(r2) else "N/A",
-        "Qualité du modèle"                 : label,
-        "Moyenne vente/jour"                : f"{daily_avg_display:.2f}",
-        "Nombre de points"                  : n_pts,
-        f"Prévision {next_month_label}"     : f"{next_month_qty:,.0f} unités",
-        f"Meilleur mois ({best_month_label})": f"{best_month_qty:,.0f} unités",
-        "Tendance générale"                 : trend,
+        "MAE"                                 : f"{mae:.2f} ({mae_pct:.1f}% de la moyenne journalière)",
+        "RMSE"                                : f"{rmse:.2f} ({rmse_pct:.1f}% de la moyenne journalière)",
+        "MAPE"                                : f"{mape_val:.2f}%",
+        "R²"                                  : f"{r2:.4f}" if not np.isnan(r2) else "N/A",
+        "Qualité du modèle"                   : label,
+        "Moyenne vente/jour"                  : f"{daily_avg_display:.2f}",
+        "Nombre de points"                    : n_pts,
+        f"Prévision {next_month_label}"       : f"{next_month_qty:,.0f} unités",
+        f"Meilleur mois ({best_month_label})" : f"{best_month_qty:,.0f} unités",
+        "Tendance générale"                   : trend,
+        "Jours fériés intégrés (exogène)"     : n_holidays_train,
+        "Pays (jours fériés)"                 : country_code,
     }
-
     with st.spinner("🧠 Analyse en cours..."):
         analyse = generer_analyse_arima(filtres, metriques)
-
     with st.container(border=True):
         st.markdown(analyse)
-
     st.download_button(
         label="⬇️ Télécharger l'analyse",
         data=analyse,
-        file_name=f"analyse_arima_{product}_{depot_sel}.txt",
+        file_name=f"analyse_sarima_{product}_{depot_sel}.txt",
         mime="text/plain"
     )

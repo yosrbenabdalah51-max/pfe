@@ -1,17 +1,22 @@
+import streamlit as st
+st.set_page_config(page_title="Comparaison Modèles", page_icon="📊", layout="wide")
+
 import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-import streamlit as st
+from auth import require_auth, user_topbar   # ← importer user_topbar
+require_auth("Comparaison Modèles")
+
+# ✅ Affiche nom utilisateur + bouton déconnexion EN DEHORS du sidebar
+user_topbar()
+
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import warnings
 from utils import get_connection, sidebar_filters
 warnings.filterwarnings("ignore")
-from auth import require_auth
-require_auth("Comparaison modèles")
-st.set_page_config(page_title="Comparaison Modèles", page_icon="📊", layout="wide")
 
 # =========================
 # CSS
@@ -45,24 +50,18 @@ st.markdown("""
     padding: 4px 12px; border-radius: 20px;
     margin-left: 10px; vertical-align: middle;
 }
-.warn-box {
-    background: #fff7ed; border: 1px solid #fed7aa;
-    border-radius: 14px; padding: 20px 24px;
-    color: #92400e; font-weight: 600;
-    font-size: 15px; text-align: center; margin: 40px 0;
-}
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="page-title">📊 Comparaison des Modèles de Prévision</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="page-sub">Résultats issus des pages <b>ARIMA</b>, <b>XGBoost</b> et <b>LSTM</b> '
+    '<div class="page-sub">Résultats issus des pages <b>SARIMA</b>, <b>XGBoost</b> et <b>LSTM</b> '
     '— aucun ré-entraînement ici.</div>',
     unsafe_allow_html=True
 )
 
 # =========================
-# SIDEBAR + FILTRES — via utils.sidebar_filters()
+# SIDEBAR
 # =========================
 df, product, depot_id, depot_sel, date_range, selected_country = sidebar_filters()
 
@@ -76,9 +75,9 @@ if df is None or len(df) == 0:
 # Lecture session_state
 # =========================
 MODEL_KEYS = {
-    "ARIMA":   f"arima_{product}_{depot_id}",
-    "XGBoost": f"xgboost_{product}_{depot_id}",
-    "LSTM":    f"lstm_{product}_{depot_id}",
+    "SARIMA":   f"sarima_{product}_{depot_id}",
+    "XGBoost":  f"xgboost_{product}_{depot_id}",
+    "LSTM":     f"lstm_{product}_{depot_id}",
 }
 
 results = {}
@@ -103,16 +102,11 @@ if missing:
 
 # =========================
 # Normalisation → journalier
-# Si un modèle a tourné sur des données hebdomadaires (freq="hebdomadaire"),
-# ses yhat sont des totaux/semaine. On divise par 7 et on interpole en daily
-# pour comparer sur la même échelle que l'historique réel journalier.
 # =========================
 def to_daily(future_df: pd.DataFrame, freq: str) -> pd.DataFrame:
     df = future_df.copy()
     if freq == "hebdomadaire":
-        # Diviser par 7 pour avoir une quantité journalière moyenne
         df["yhat"] = df["yhat"] / 7.0
-        # Interpoler pour avoir un point par jour (au lieu d'un par semaine)
         df = (df.set_index("ds")
                 .resample("D")["yhat"]
                 .interpolate(method="linear")
@@ -120,28 +114,28 @@ def to_daily(future_df: pd.DataFrame, freq: str) -> pd.DataFrame:
     return df
 
 # =========================
-# Helpers affichage
+# Constantes visuelles
 # =========================
-DARK_BG    = "#0e1117"
-DARK_PLOT  = "#161b22"
-DARK_GRID  = "#21262d"
-DARK_TEXT  = "#e6edf3"
+DARK_BG   = "#0e1117"
+DARK_PLOT = "#161b22"
+DARK_GRID = "#21262d"
+DARK_TEXT = "#e6edf3"
 HIST_COLOR = "#c9d1d9"
 
 MODEL_COLORS = {
-    "ARIMA":   "#f97316",
+    "SARIMA":  "#f97316",
     "XGBoost": "#a855f7",
     "LSTM":    "#22c55e",
 }
-MODEL_DASH = {
-    "ARIMA":   "dash",
-    "XGBoost": "dashdot",
-    "LSTM":    "dot",
-}
 MODEL_COLORS_CARDS = {
-    "ARIMA":   "#f97316",
+    "SARIMA":  "#f97316",
     "XGBoost": "#a855f7",
     "LSTM":    "#10b981",
+}
+MODEL_DASH = {
+    "SARIMA":  "dash",
+    "XGBoost": "dashdot",
+    "LSTM":    "dot",
 }
 
 def fmt_r2(v):
@@ -201,18 +195,6 @@ df_hist      = df_hist_full[df_hist_full["ds"] >= pd.Timestamp("2024-01-01")].co
 hist_end     = df_hist_full["ds"].max() if not df_hist_full.empty else pd.Timestamp("2025-01-01")
 
 # =========================
-# Debug — décommenter pour vérifier les échelles
-# =========================
-# with st.expander("🔍 Debug — échelles brutes par modèle"):
-#     for name, m in results.items():
-#         f = m["future"]
-#         freq = m.get("freq", "journalière")
-#         st.write(f"**{name}** | freq={freq} | n={len(f)} | "
-#                  f"min={f['yhat'].min():.2f} | max={f['yhat'].max():.2f} | "
-#                  f"mean={f['yhat'].mean():.2f} | "
-#                  f"première={f['ds'].iloc[0].date()} | dernière={f['ds'].iloc[-1].date()}")
-
-# =========================
 # SECTION 1 — GRAPHIQUE PRINCIPAL
 # =========================
 st.markdown(
@@ -222,7 +204,6 @@ st.markdown(
 
 fig_main = go.Figure()
 
-# Séparateur historique / futur
 fig_main.add_shape(
     type="line", xref="x", yref="paper",
     x0=hist_end.isoformat(), x1=hist_end.isoformat(),
@@ -239,7 +220,6 @@ fig_main.add_annotation(
     bgcolor="rgba(0,0,0,0)"
 )
 
-# Historique réel
 if not df_hist.empty:
     fig_main.add_trace(go.Scatter(
         x=df_hist["ds"], y=df_hist["y"],
@@ -249,7 +229,6 @@ if not df_hist.empty:
         hovertemplate="<b>Réel</b><br>%{x|%Y-%m-%d}<br>Qté/j : %{y:,.2f}<extra></extra>"
     ))
 
-# Prévisions futures normalisées
 for name, m in results.items():
     freq      = m.get("freq", "journalière")
     future_df = to_daily(m["future"].copy(), freq)
@@ -276,7 +255,6 @@ for name, m in results.items():
         hovertemplate=f"<b>{name}</b><br>%{{x|%Y-%m-%d}}<br>Prév/j : %{{y:,.2f}}<extra></extra>"
     ))
 
-# Annotation meilleur modèle
 fig_main.add_annotation(
     x=0.99, y=0.05, xref="paper", yref="paper",
     text=f"🏆 <b>{best_model}</b>  R²={fmt_r2(results[best_model]['R2'])}  MAPE={fmt_mape(results[best_model]['MAPE'])}",
@@ -320,7 +298,6 @@ fig_main.update_layout(
         x=0.01
     ),
 )
-
 st.plotly_chart(fig_main, use_container_width=True)
 
 # =========================
@@ -370,9 +347,129 @@ for i, (name, m) in enumerate(results.items()):
 
 st.markdown("<br>", unsafe_allow_html=True)
 
+# =========================
+# SECTION 3 — TABLEAU COMPARATIF
+# =========================
+st.markdown(
+    '<div class="section-title">📊 Tableau comparatif des métriques</div>',
+    unsafe_allow_html=True
+)
+
+rows = []
+for name, m in results.items():
+    rows.append({
+        "Modèle":   name,
+        "R²":       fmt_r2(m["R2"]),
+        "MAPE":     fmt_mape(m["MAPE"]),
+        "MAE":      f"{m['MAE']:.2f}",
+        "RMSE":     f"{m['RMSE']:.2f}",
+        "Qualité":  m["quality"],
+        "Fréquence": m.get("freq", "journalière"),
+        "Meilleur": "🏆" if name == best_model else "",
+    })
+
+df_table = pd.DataFrame(rows)
+st.dataframe(df_table, use_container_width=True, hide_index=True)
 
 # =========================
-# SECTION 5 — RECOMMANDATION
+# SECTION 4 — GRAPHIQUE BARRES MÉTRIQUES
+# =========================
+st.markdown(
+    '<div class="section-title">📉 Comparaison visuelle MAE / RMSE / MAPE</div>',
+    unsafe_allow_html=True
+)
+
+model_names = list(results.keys())
+mae_vals    = [results[n]["MAE"]  for n in model_names]
+rmse_vals   = [results[n]["RMSE"] for n in model_names]
+mape_vals   = [results[n]["MAPE"] if not np.isnan(results[n]["MAPE"]) else 0 for n in model_names]
+colors      = [MODEL_COLORS.get(n, "#6c63ff") for n in model_names]
+
+col_b1, col_b2, col_b3 = st.columns(3)
+
+with col_b1:
+    fig_mae = go.Figure(go.Bar(
+        x=model_names, y=mae_vals,
+        marker_color=colors, text=[f"{v:.2f}" for v in mae_vals],
+        textposition="outside"
+    ))
+    fig_mae.update_layout(
+        title="MAE (↓ meilleur)", template="plotly_white",
+        height=300, margin=dict(l=0, r=0, t=40, b=0),
+        yaxis_title="MAE"
+    )
+    st.plotly_chart(fig_mae, use_container_width=True)
+
+with col_b2:
+    fig_rmse = go.Figure(go.Bar(
+        x=model_names, y=rmse_vals,
+        marker_color=colors, text=[f"{v:.2f}" for v in rmse_vals],
+        textposition="outside"
+    ))
+    fig_rmse.update_layout(
+        title="RMSE (↓ meilleur)", template="plotly_white",
+        height=300, margin=dict(l=0, r=0, t=40, b=0),
+        yaxis_title="RMSE"
+    )
+    st.plotly_chart(fig_rmse, use_container_width=True)
+
+with col_b3:
+    fig_mape = go.Figure(go.Bar(
+        x=model_names, y=mape_vals,
+        marker_color=colors, text=[f"{v:.1f}%" for v in mape_vals],
+        textposition="outside"
+    ))
+    fig_mape.update_layout(
+        title="MAPE % (↓ meilleur)", template="plotly_white",
+        height=300, margin=dict(l=0, r=0, t=40, b=0),
+        yaxis_title="MAPE %"
+    )
+    st.plotly_chart(fig_mape, use_container_width=True)
+
+# =========================
+# SECTION 5 — PRÉVISIONS MENSUELLES COMPARÉES
+# =========================
+st.markdown(
+    '<div class="section-title">📅 Prévisions mensuelles comparées</div>',
+    unsafe_allow_html=True
+)
+
+today = pd.Timestamp.today().normalize()
+fig_monthly = go.Figure()
+
+for name, m in results.items():
+    freq      = m.get("freq", "journalière")
+    future_df = to_daily(m["future"].copy(), freq)
+    future_df = future_df[future_df["ds"] > hist_end].copy()
+    if future_df.empty:
+        continue
+    future_df["month"] = future_df["ds"].dt.to_period("M")
+    monthly = (future_df.groupby("month")["yhat"].sum().reset_index())
+    monthly["month_str"] = monthly["month"].astype(str)
+    monthly = monthly[
+        monthly["month"].apply(lambda p: p.to_timestamp()) >= today.replace(day=1)
+    ]
+    if monthly.empty:
+        continue
+    fig_monthly.add_trace(go.Scatter(
+        x=monthly["month_str"], y=monthly["yhat"].round(0),
+        mode="lines+markers", name=name,
+        line=dict(color=MODEL_COLORS.get(name, "#6c63ff"), width=2),
+        marker=dict(size=7),
+        hovertemplate=f"<b>{name}</b><br>%{{x}}<br>Total : %{{y:,.0f}}<extra></extra>"
+    ))
+
+fig_monthly.update_layout(
+    template="plotly_white", height=380,
+    hovermode="x unified",
+    xaxis_title="Mois", yaxis_title="Quantité totale prévue",
+    margin=dict(l=0, r=0, t=20, b=0),
+    legend=dict(orientation="h", y=1.1, x=0),
+)
+st.plotly_chart(fig_monthly, use_container_width=True)
+
+# =========================
+# SECTION 6 — RECOMMANDATION
 # =========================
 st.markdown(
     '<div class="section-title">💡 Recommandation</div>',
@@ -380,7 +477,7 @@ st.markdown(
 )
 
 interp = {
-    "ARIMA":   "Idéal pour les séries stationnaires et linéaires. Rapide à entraîner.",
+    "SARIMA":  "Idéal pour les séries stationnaires et linéaires avec saisonnalité. Rapide à entraîner.",
     "XGBoost": "Excellent pour capturer les patterns non-linéaires avec des features riches.",
     "LSTM":    "Meilleur pour les dépendances temporelles longues et complexes.",
 }
@@ -400,32 +497,32 @@ if missing:
         + ", ".join(missing)
         + ". Lancez leurs pages respectives pour les inclure."
     )
-    # ============================================
+
+# =========================
 # 🤖 ANALYSE IA
-# ============================================
+# =========================
 from analyse.generateur import generer_analyse_comparaison
 
 st.divider()
-
+st.markdown("### 🤖 Analyse intelligente de cette page")
 col_btn = st.columns([2, 2, 2])
 with col_btn[1]:
     btn = st.button("🤖 Analyse Intelligente", use_container_width=True, type="primary")
 
 if btn:
     filtres = {
-        "Produit"          : label_produit,
-        "Dépôt"            : depot_sel,
-        "Pays"             : selected_country,
-        "Meilleur modèle"  : best_model,
+        "Produit":         label_produit,
+        "Dépôt":           depot_sel,
+        "Pays":            selected_country,
+        "Meilleur modèle": best_model,
     }
-
     metriques = {}
     for name, m in results.items():
-        metriques[f"{name} — R²"]   = fmt_r2(m["R2"])
-        metriques[f"{name} — MAPE"] = fmt_mape(m["MAPE"])
-        metriques[f"{name} — MAE"]  = f"{m['MAE']:.2f}"
-        metriques[f"{name} — RMSE"] = f"{m['RMSE']:.2f}"
-        metriques[f"{name} — Qualité"] = m["quality"]
+        metriques[f"{name} — R²"]        = fmt_r2(m["R2"])
+        metriques[f"{name} — MAPE"]      = fmt_mape(m["MAPE"])
+        metriques[f"{name} — MAE"]       = f"{m['MAE']:.2f}"
+        metriques[f"{name} — RMSE"]      = f"{m['RMSE']:.2f}"
+        metriques[f"{name} — Qualité"]   = m["quality"]
         metriques[f"{name} — Fréquence"] = m.get("freq", "journalière")
 
     with st.spinner("🧠 Analyse en cours..."):

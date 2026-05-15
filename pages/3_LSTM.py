@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from utils import get_connection, sidebar_filters
+from holidays_utils import add_holiday_feature, get_holiday_info_text, resolve_country_code
 from auth import require_auth
 require_auth("LSTM")
 warnings.filterwarnings("ignore")

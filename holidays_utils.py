@@ -1,258 +1,110 @@
+# analyse/holidays_utils.py
 """
-holidays_utils.py
-=================
-Fournit les jours fériés par dépôt pour les modèles ARIMA, XGBoost et LSTM.
+Utilitaire de jours fériés pour les pays des dépôts :
+  France (FR), Allemagne (DE) — remplace Algérie (DZ),
+  Espagne (ES), Italie (IT), Grèce (GR)
 
-Utilisation :
-    from holidays_utils import get_holidays_for_depot, get_holiday_features
-
-Pays couverts : France (FR), Allemagne (DE), Espagne (ES), Italie (IT), Grèce (GR)
-
-Note : Dépôt 6 (Agence Ouled Fayet) → Allemagne (DE) — correction appliquée.
+Usage :
+    from holidays_utils import get_holidays_df, add_holiday_feature
 """
 
 import pandas as pd
-import numpy as np
 
-# ─────────────────────────────────────────────
-# MAPPING  depot_id → country_code
-# ─────────────────────────────────────────────
-DEPOT_COUNTRY = {
-    # France
-    1:  "FR",   # Agence Paris
-    2:  "FR",   # Siège Lyon
-    3:  "FR",   # Agence Marseille
-    8:  "FR",   # Depot Transporteur France
-    67: "FR",   # Agence Toulouse
-    # Allemagne (incl. correction dépôt 6)
-    6:  "DE",   # Agence Ouled Fayet — corrigé (était DZ → DE)
-    20: "DE",   # Agence Munich
-    21: "DE",   # Agence Hamburg
-    51: "DE",   # Agence Cologne
-    52: "DE",   # Agence Frankfurt
-    57: "DE",   # Dépôt Berlin
-    65: "DE",   # Agence Stuttgart
-    # Espagne
-    24: "ES",   # Siège Madrid
-    # Italie
-    12: "IT",   # Siège Rome
-    # Grèce
-    41: "GR",   # Dépôt Export Athens
+try:
+    import holidays as hol_lib
+    HOLIDAYS_AVAILABLE = True
+except ImportError:
+    HOLIDAYS_AVAILABLE = False
+
+# ──────────────────────────────────────────────
+# Mapping pays → code ISO
+# NB : Algérie (DZ) remplacée par Allemagne (DE)
+# ──────────────────────────────────────────────
+COUNTRY_CODE_MAP = {
+    # Noms français / anglais tolérés
+    "france":      "FR",
+    "FR":          "FR",
+    "allemagne":   "DE",
+    "germany":     "DE",
+    "DE":          "DE",
+    "algerie":     "DE",   # ← remplacé par DE
+    "algérie":     "DE",
+    "DZ":          "DE",
+    "espagne":     "ES",
+    "spain":       "ES",
+    "ES":          "ES",
+    "italie":      "IT",
+    "italy":       "IT",
+    "IT":          "IT",
+    "grece":       "GR",
+    "grèce":       "GR",
+    "greece":      "GR",
+    "GR":          "GR",
 }
 
-
-def _year_range(start_date, end_date):
-    y1 = pd.Timestamp(start_date).year
-    y2 = pd.Timestamp(end_date).year
-    return list(range(y1, y2 + 1))
+# Pays présents dans les dépôts (après remplacement DZ→DE)
+ALL_COUNTRIES = ["FR", "DE", "ES", "IT", "GR"]
 
 
-# ─────────────────────────────────────────────
-# CALCUL PÂQUES (algorithme de Butcher)
-# ─────────────────────────────────────────────
-
-def _easter(year: int) -> pd.Timestamp:
-    a = year % 19
-    b, c = divmod(year, 100)
-    d, e = divmod(b, 4)
-    f = (b + 8) // 25
-    g = (b - f + 1) // 3
-    h = (19 * a + b - d - g + 15) % 30
-    i, k = divmod(c, 4)
-    l = (32 + 2 * e + 2 * i - h - k) % 7
-    m = (a + 11 * h + 22 * l) // 451
-    month = (h + l - 7 * m + 114) // 31
-    day   = ((h + l - 7 * m + 114) % 31) + 1
-    return pd.Timestamp(year=year, month=month, day=day)
-
-
-# ─────────────────────────────────────────────
-# JOURS FÉRIÉS PAR PAYS
-# ─────────────────────────────────────────────
-
-def _france_holidays(years):
-    dates = []
-    for y in years:
-        e = _easter(y)
-        dates += [
-            pd.Timestamp(y,  1,  1),        # Jour de l'An
-            e + pd.Timedelta(days=1),        # Lundi de Pâques
-            pd.Timestamp(y,  5,  1),        # Fête du Travail
-            pd.Timestamp(y,  5,  8),        # Victoire 1945
-            e + pd.Timedelta(days=39),       # Ascension
-            e + pd.Timedelta(days=50),       # Lundi de Pentecôte
-            pd.Timestamp(y,  7, 14),        # Fête Nationale
-            pd.Timestamp(y,  8, 15),        # Assomption
-            pd.Timestamp(y, 11,  1),        # Toussaint
-            pd.Timestamp(y, 11, 11),        # Armistice
-            pd.Timestamp(y, 12, 25),        # Noël
-        ]
-    return pd.DatetimeIndex(sorted(set(dates)))
-
-
-def _germany_holidays(years):
-    dates = []
-    for y in years:
-        e = _easter(y)
-        dates += [
-            pd.Timestamp(y,  1,  1),        # Neujahr
-            e - pd.Timedelta(days=2),        # Karfreitag
-            e + pd.Timedelta(days=1),        # Ostermontag
-            pd.Timestamp(y,  5,  1),        # Tag der Arbeit
-            e + pd.Timedelta(days=39),       # Christi Himmelfahrt
-            e + pd.Timedelta(days=50),       # Pfingstmontag
-            pd.Timestamp(y, 10,  3),        # Tag der Deutschen Einheit
-            pd.Timestamp(y, 12, 25),        # 1. Weihnachtstag
-            pd.Timestamp(y, 12, 26),        # 2. Weihnachtstag
-        ]
-    return pd.DatetimeIndex(sorted(set(dates)))
-
-
-def _spain_holidays(years):
-    dates = []
-    for y in years:
-        e = _easter(y)
-        dates += [
-            pd.Timestamp(y,  1,  1),        # Año Nuevo
-            pd.Timestamp(y,  1,  6),        # Reyes Magos
-            e - pd.Timedelta(days=2),        # Viernes Santo
-            pd.Timestamp(y,  5,  1),        # Día del Trabajo
-            pd.Timestamp(y,  8, 15),        # Asunción
-            pd.Timestamp(y, 10, 12),        # Fiesta Nacional
-            pd.Timestamp(y, 11,  1),        # Todos los Santos
-            pd.Timestamp(y, 12,  6),        # Día de la Constitución
-            pd.Timestamp(y, 12,  8),        # Inmaculada Concepción
-            pd.Timestamp(y, 12, 25),        # Navidad
-        ]
-    return pd.DatetimeIndex(sorted(set(dates)))
-
-
-def _italy_holidays(years):
-    dates = []
-    for y in years:
-        e = _easter(y)
-        dates += [
-            pd.Timestamp(y,  1,  1),        # Capodanno
-            pd.Timestamp(y,  1,  6),        # Epifania
-            e + pd.Timedelta(days=1),        # Lunedì dell'Angelo
-            pd.Timestamp(y,  4, 25),        # Festa della Liberazione
-            pd.Timestamp(y,  5,  1),        # Festa dei Lavoratori
-            pd.Timestamp(y,  6,  2),        # Festa della Repubblica
-            pd.Timestamp(y,  8, 15),        # Ferragosto
-            pd.Timestamp(y, 11,  1),        # Ognissanti
-            pd.Timestamp(y, 12,  8),        # Immacolata Concezione
-            pd.Timestamp(y, 12, 25),        # Natale
-            pd.Timestamp(y, 12, 26),        # Santo Stefano
-        ]
-    return pd.DatetimeIndex(sorted(set(dates)))
-
-
-def _greece_holidays(years):
-    dates = []
-    for y in years:
-        # Pâques orthodoxe ≈ Pâques grégorien + 13 jours
-        e = _easter(y) + pd.Timedelta(days=13)
-        dates += [
-            pd.Timestamp(y,  1,  1),        # Πρωτοχρονιά
-            pd.Timestamp(y,  1,  6),        # Θεοφάνεια
-            pd.Timestamp(y,  3, 25),        # Εθνική Εορτή
-            e - pd.Timedelta(days=2),        # Μεγάλη Παρασκευή
-            e + pd.Timedelta(days=1),        # Δευτέρα του Πάσχα
-            pd.Timestamp(y,  5,  1),        # Εργατική Πρωτομαγιά
-            e + pd.Timedelta(days=50),       # Αγίου Πνεύματος
-            pd.Timestamp(y,  8, 15),        # Κοίμηση Θεοτόκου
-            pd.Timestamp(y, 10, 28),        # Εθνική Εορτή (Όχι)
-            pd.Timestamp(y, 12, 25),        # Χριστούγεννα
-            pd.Timestamp(y, 12, 26),        # Σύναξη Θεοτόκου
-        ]
-    return pd.DatetimeIndex(sorted(set(dates)))
-
-
-_HOLIDAY_FUNCS = {
-    "FR": _france_holidays,
-    "DE": _germany_holidays,
-    "ES": _spain_holidays,
-    "IT": _italy_holidays,
-    "GR": _greece_holidays,
-}
-
-
-# ─────────────────────────────────────────────
-# API PUBLIQUE
-# ─────────────────────────────────────────────
-
-def get_country_for_depot(depot_id) -> str:
-    """Retourne le code pays ISO2 pour un depot_id. 'FR' par défaut."""
-    if depot_id is None or depot_id == "all":
+def resolve_country_code(country_str: str) -> str:
+    """Convertit un nom ou code pays en code ISO 2 lettres."""
+    if not country_str:
         return "FR"
+    key = country_str.strip().lower()
+    # Essai direct
+    for k, v in COUNTRY_CODE_MAP.items():
+        if k.lower() == key:
+            return v
+    # Essai partiel (ex: "France (FR)")
+    for k, v in COUNTRY_CODE_MAP.items():
+        if k.lower() in key:
+            return v
+    return "FR"   # fallback
+
+
+def get_holidays_df(country_code: str, years=None) -> pd.DataFrame:
+    """
+    Retourne un DataFrame des jours fériés avec colonnes :
+        ds (datetime), holiday (str), country (str)
+    """
+    if years is None:
+        years = list(range(2020, 2027))
+    if not HOLIDAYS_AVAILABLE:
+        return pd.DataFrame(columns=["ds", "holiday", "country"])
+
+    code = resolve_country_code(country_code)
     try:
-        return DEPOT_COUNTRY.get(int(depot_id), "FR")
-    except (ValueError, TypeError):
-        return "FR"
+        h = hol_lib.country_holidays(code, years=years)
+        rows = [{"ds": pd.Timestamp(d), "holiday": name, "country": code}
+                for d, name in h.items()]
+        return pd.DataFrame(rows).sort_values("ds").reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame(columns=["ds", "holiday", "country"])
 
 
-def get_holidays_for_depot(depot_id, start_date, end_date) -> pd.DatetimeIndex:
+def add_holiday_feature(df: pd.DataFrame, country_code: str,
+                        date_col: str = "ds") -> pd.DataFrame:
     """
-    Retourne les jours fériés pour le dépôt donné entre start_date et end_date.
-
-    Paramètres
-    ----------
-    depot_id   : int ou str  (ex: 1, "6", "all")
-    start_date : str ou Timestamp
-    end_date   : str ou Timestamp
+    Ajoute une colonne binaire `is_holiday` (1/0) à un DataFrame
+    ayant une colonne de dates `date_col`.
     """
-    country  = get_country_for_depot(depot_id)
-    years    = _year_range(start_date, end_date)
-    func     = _HOLIDAY_FUNCS.get(country, _france_holidays)
-    holidays = func(years)
-    mask     = (holidays >= pd.Timestamp(start_date)) & (holidays <= pd.Timestamp(end_date))
-    return holidays[mask]
+    df = df.copy()
+    hdf = get_holidays_df(country_code)
+    if hdf.empty:
+        df["is_holiday"] = 0
+        return df
+    holiday_dates = set(hdf["ds"].dt.normalize())
+    df["is_holiday"] = df[date_col].dt.normalize().isin(holiday_dates).astype(int)
+    return df
 
 
-def get_holiday_features(df_dates: pd.Series, depot_id) -> pd.DataFrame:
-    """
-    Génère 3 features booléennes de jours fériés pour XGBoost / LSTM.
-
-    Retour : DataFrame avec colonnes
-        - is_holiday      : 1 si jour férié
-        - pre_holiday     : 1 si veille d'un jour férié
-        - post_holiday    : 1 si lendemain d'un jour férié
-        - holiday_country : code pays (pour debug)
-    """
-    dates    = pd.DatetimeIndex(df_dates)
-    start    = dates.min() - pd.Timedelta(days=2)
-    end      = dates.max() + pd.Timedelta(days=2)
-    holidays = get_holidays_for_depot(depot_id, start, end)
-    country  = get_country_for_depot(depot_id)
-
-    is_hol   = dates.isin(holidays).astype(int)
-    pre_hol  = (dates + pd.Timedelta(days=1)).isin(holidays).astype(int)
-    post_hol = (dates - pd.Timedelta(days=1)).isin(holidays).astype(int)
-
-    return pd.DataFrame({
-        "is_holiday":      is_hol,
-        "pre_holiday":     pre_hol,
-        "post_holiday":    post_hol,
-        "holiday_country": country,
-    }, index=df_dates.index)
-
-
-def get_prophet_holidays(depot_id, start_date="2020-01-01", end_date="2026-12-31") -> pd.DataFrame:
-    """
-    Retourne un DataFrame au format Prophet holidays :
-        colonnes : ['holiday', 'ds', 'lower_window', 'upper_window']
-    Compatible avec prophet.Prophet(holidays=df)
-    """
-    country  = get_country_for_depot(depot_id)
-    years    = _year_range(start_date, end_date)
-    func     = _HOLIDAY_FUNCS.get(country, _france_holidays)
-    holidays = func(years)
-    mask     = (holidays >= pd.Timestamp(start_date)) & (holidays <= pd.Timestamp(end_date))
-    filtered = holidays[mask]
-
-    return pd.DataFrame({
-        "holiday":      f"public_holiday_{country}",
-        "ds":           filtered,
-        "lower_window": -1,
-        "upper_window":  1,
-    })
+def get_holiday_info_text(country_code: str) -> str:
+    """Retourne un résumé lisible des jours fériés du pays."""
+    code = resolve_country_code(country_code)
+    hdf  = get_holidays_df(code)
+    if hdf.empty:
+        return f"Aucun jour férié chargé pour {code}."
+    n = len(hdf)
+    years = sorted(hdf["ds"].dt.year.unique())
+    return (f"📅 **{n} jours fériés** chargés pour **{code}** "
+            f"({years[0]}–{years[-1]})")
