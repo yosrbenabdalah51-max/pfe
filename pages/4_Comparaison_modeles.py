@@ -504,7 +504,6 @@ if missing:
 from analyse.generateur import generer_analyse_comparaison
 
 st.divider()
-st.markdown("### 🤖 Analyse intelligente de cette page")
 col_btn = st.columns([2, 2, 2])
 with col_btn[1]:
     btn = st.button("🤖 Analyse Intelligente", use_container_width=True, type="primary")

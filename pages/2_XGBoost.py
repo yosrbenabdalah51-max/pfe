@@ -431,10 +431,9 @@ st.session_state[sess_key] = {
 from analyse.generateur import generer_analyse_xgboost
 
 st.divider()
-st.markdown("### 🤖 Analyse intelligente de cette page")
 col_btn = st.columns([2, 2, 2])
 with col_btn[1]:
-    btn = st.button(" Analyse Intelligente  ", use_container_width=True, type="primary")
+    btn = st.button("🤖 Analyse Intelligente  ", use_container_width=True, type="primary")
 
 if btn:
     filtres = {
