@@ -8,4 +8,4 @@ holidays
 statsmodels
 scikit-learn
 xgboost
-tensorflow
+
