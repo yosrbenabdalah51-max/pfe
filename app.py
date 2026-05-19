@@ -117,12 +117,12 @@ def get_product_label(ref_id):
 # =========================
 # SIDEBAR — filtres uniquement, plus de déconnexion ici
 # =========================
-st.sidebar.header("🔎 Filtrage")
+st.sidebar.header(" Filtrage")
 st.sidebar.markdown("---")
 date_range = st.sidebar.date_input("Date", [df['date_time'].min(), df['date_time'].max()])
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("🎯 Produit")
+st.sidebar.subheader(" Produit")
 product_rank_sb = (df.groupby('ref_product')['total']
                    .sum().reset_index()
                    .sort_values('total', ascending=False))
@@ -144,14 +144,14 @@ else:
 st.session_state["product"] = selected_product
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("🌍 Pays")
+st.sidebar.subheader(" Pays")
 country_options = ["🌐 Tous les pays"] + sorted(df['country_name'].dropna().unique().tolist())
 selected_country = st.sidebar.selectbox("Choisir un pays", country_options)
 if selected_country == "🌐 Tous les pays":
     selected_country = None
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("🏭 Dépôt")
+st.sidebar.subheader(" Dépôt")
 if selected_country:
     depot_list = df[df['country_name'] == selected_country]['depot_name'].dropna().unique().tolist()
 else:
@@ -212,7 +212,7 @@ card(col4, "VENTE MOYENNE",             f"{avg_sale:,.2f}")
 # =========================
 # ONGLETS
 # =========================
-tab1, tab2 = st.tabs(["🏠 Vue Globale", "📊 Dashboard Analytique"])
+tab1, tab2 = st.tabs([" Vue Globale", "📊 Dashboard Analytique"])
 
 # ── TAB 1 : Vue Globale ──────────────────────────────────────────────
 with tab1:
@@ -249,7 +249,7 @@ with tab1:
         )
 
     with colD:
-        st.subheader("🥧 Répartition")
+        st.subheader(" Répartition")
         top_products_named = top_products.copy()
         top_products_named['label'] = top_products_named['ref_product'].apply(
             lambda x: PRODUCT_NAMES_DB.get(x, f"#{x}")

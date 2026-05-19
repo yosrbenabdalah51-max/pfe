@@ -1,0 +1,11 @@
+streamlit
+pandas
+numpy
+plotly
+mysql-connector-python
+python-dotenv
+holidays
+statsmodels
+scikit-learn
+xgboost
+tensorflow

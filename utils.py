@@ -131,7 +131,7 @@ def sidebar_filters():
 
     # --- Produit ---
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🎯 Produit")
+    st.sidebar.subheader(" Produit")
     product_rank_sb = (df_full.groupby("ref_product")["total"]
                        .sum().reset_index()
                        .sort_values("total", ascending=False))
@@ -155,7 +155,7 @@ def sidebar_filters():
 
     # --- Pays ---
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🌍 Pays")
+    st.sidebar.subheader(" Pays")
     country_options = ["🌐 Tous les pays"] + sorted(df_full["country_name"].dropna().unique().tolist())
     selected_country = st.sidebar.selectbox("Choisir un pays", country_options)
     if selected_country == "🌐 Tous les pays":
@@ -163,7 +163,7 @@ def sidebar_filters():
 
     # --- Dépôt ---
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🏭 Dépôt")
+    st.sidebar.subheader(" Dépôt")
     if selected_country:
         depot_list = df_full[df_full["country_name"] == selected_country]["depot_name"].dropna().unique().tolist()
     else:

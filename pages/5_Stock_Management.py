@@ -1,14 +1,18 @@
 import streamlit as st
-st.set_page_config(page_title="Stock Management", layout="wide")
+st.set_page_config(page_title="Gestion de Stock", layout="wide")
 
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from utils import get_connection
-from auth import require_auth
-require_auth("Stock Management")
+from auth import require_auth, user_topbar
 
-st.title(" Stock Management")
+# ✅ Authentification + bouton déconnexion
+require_auth("Gestion de Stock")
+user_topbar()
+
+# ✅ Titre renommé
+st.title("📦 Gestion de Stock")
 st.caption("Sélection automatique du meilleur modèle par produit · Analyse stock · Alertes rupture / surstock")
 
 MODEL_COLORS = {
@@ -72,18 +76,9 @@ def load_history(ref_product, depot_id_val):
         return pd.DataFrame(columns=["date", "quantity"])
 
 # =============================================================
-# ESTIMATION STOCK — cohérente avec les seuils, robuste aux données anciennes
+# ESTIMATION STOCK
 # =============================================================
 def estimer_stock(history: pd.DataFrame, lead_time: int = 7, periode_jours: int = 30) -> tuple:
-    """
-    Estime le stock actuel ≈ stock optimal théorique
-    = ROP (Q3 × lead_time) + Q2 × lead_time
-
-    Fallback automatique si les 30 derniers jours calendaires sont vides :
-    on utilise les 30 dernières lignes disponibles dans l'historique.
-
-    Retourne (estime, recent_qty, fallback_utilise)
-    """
     if history.empty:
         return 0, pd.Series(dtype=float), False
 
@@ -129,7 +124,7 @@ with st.sidebar:
         value=(today_date + pd.Timedelta(days=30)).date(),
         min_value=(today_date + pd.Timedelta(days=1)).date(),
         max_value=pd.Timestamp("2026-12-31").date(),
-        help="Choisissez librement la date de fin d'analyse. Les prévisions disponibles vont jusqu'à la date générée par vos modèles."
+        help="Choisissez librement la date de fin d'analyse."
     )
 
     horizon_days = (pd.Timestamp(date_fin) - today_date).days
@@ -157,12 +152,11 @@ product         = best_data["product"]
 depot_id        = best_data["depot_id"]
 depot_sel       = best_data.get("depot_sel") or depot_id
 
-# Chargement historique
 with st.spinner("Chargement historique..."):
     history = load_history(product, depot_id)
 
 # =============================================================
-# SEUILS — basés sur tout l'historique disponible
+# SEUILS
 # =============================================================
 if not history.empty:
     hist_qty = history["quantity"].values
@@ -198,7 +192,7 @@ with st.sidebar:
         if fallback_utilise:
             st.warning(
                 "⚠️ Pas de ventes dans les 30 derniers jours calendaires.\n\n"
-                "Estimation basée sur les **dernières données disponibles** dans l'historique."
+                "Estimation basée sur les **dernières données disponibles**."
             )
         if not recent_qty_used.empty:
             q2_disp = round(np.quantile(recent_qty_used.values, 0.50), 1)
@@ -215,12 +209,8 @@ with st.sidebar:
 
     stock_actuel = st.number_input(
         "Confirmer / Corriger le stock (unités)",
-        min_value=0,
-        value=stock_estime,
-        help=(
-            "Estimé automatiquement depuis les quantiles de ventes × délai réappro. "
-            "Cohérent avec les seuils affichés. Corrigez si vous connaissez la valeur réelle."
-        )
+        min_value=0, value=stock_estime,
+        help="Estimé automatiquement. Corrigez si vous connaissez la valeur réelle."
     )
     if stock_actuel != stock_estime:
         st.warning(f"⚠️ Valeur modifiée manuellement ({stock_actuel:,} unités)")
@@ -269,18 +259,16 @@ forecast_horizon = forecast_df[
 if forecast_horizon.empty:
     st.error(
         f"❌ Aucune prévision disponible entre aujourd'hui et le {date_fin.strftime('%d/%m/%Y')}.\n\n"
-        "Les prévisions de vos modèles ne couvrent pas cette période. "
         "Réduisez l'horizon ou relancez vos modèles avec un horizon plus long."
     )
     st.stop()
 
-# Avertir si les prévisions s'arrêtent avant la date choisie
 derniere_prevision = forecast_horizon["ds"].max()
 if derniere_prevision < date_fin_ts:
     st.warning(
         f"⚠️ Les prévisions disponibles s'arrêtent au **{derniere_prevision.strftime('%d/%m/%Y')}**, "
-        f"avant votre date cible ({date_fin.strftime('%d/%m/%Y')}. "
-        "Relancez vos modèles avec un horizon plus long pour couvrir toute la période."
+        f"avant votre date cible ({date_fin.strftime('%d/%m/%Y')}). "
+        "Relancez vos modèles avec un horizon plus long."
     )
     horizon_days = (derniere_prevision - today_date).days
 
@@ -292,13 +280,9 @@ demand_total = int(round(float(np.sum(yhat_vals))))
 demand_moy_j = round(float(np.mean(yhat_vals)), 1)
 
 # =============================================================
-# SIMULATION UNIQUE — partagée entre KPIs, graphique et tableau
+# SIMULATION
 # =============================================================
 def simulate_stock(stock_depart, forecast_df, reorder_point, stock_optimal, lead_time):
-    """
-    Simule l'évolution du stock jour par jour avec déclenchement automatique des commandes.
-    Retourne (stock_sim, cmd_sim, stock_fin_reel)
-    """
     n            = len(forecast_df)
     stock_c      = float(stock_depart)
     livraisons   = {}
@@ -338,7 +322,7 @@ forecast_horizon["commande"]     = cmd_sim
 forecast_horizon["date_label"]   = forecast_horizon["ds"].dt.strftime("%d/%m")
 
 # =============================================================
-# DIAGNOSTIC — basé sur stock_fin_reel (avec réappros)
+# DIAGNOSTIC
 # =============================================================
 if stock_fin_reel < 0:
     risque     = "🔴 Rupture de stock prévue"
@@ -426,7 +410,6 @@ with tab1:
         f"({horizon_days} jours)"
     )
 
-    # Pour les grands horizons, on agrège par semaine pour la lisibilité
     if horizon_days > 60:
         fh_plot = forecast_horizon.copy()
         fh_plot["semaine"] = fh_plot["ds"].dt.to_period("W").apply(lambda r: r.start_time)
@@ -461,7 +444,6 @@ with tab1:
         marker_color="#a78bfa", opacity=0.85, offsetgroup=2, width=0.35
     ))
 
-    # Triangles commandes
     mask_cmd = y_cmd > 0
     if mask_cmd.any():
         fig.add_trace(go.Scatter(
@@ -574,12 +556,12 @@ with tab2:
 # 🤖 ANALYSE IA
 # =============================================================
 from analyse.generateur import generer_analyse_stock
- 
+
 st.divider()
 col_btn = st.columns([2, 2, 2])
 with col_btn[1]:
     btn = st.button("🤖 Analyse Intelligente", use_container_width=True, type="primary")
- 
+
 if btn:
     filtres = {
         "Produit"          : str(product),
@@ -596,25 +578,18 @@ if btn:
         ),
     }
     metriques = {
-        # ── KPIs ──────────────────────────────────────────────
         "Stock estimé automatiquement"  : f"{stock_estime:,} unités",
         "Stock actuel utilisé"          : f"{stock_actuel:,} unités",
         "Demande prévue totale"         : f"{demand_total:,} unités sur {horizon_days} jours",
         "Moyenne journalière"           : f"{demand_moy_j} unités/jour",
         "Stock fin horizon (simulé)"    : f"{stock_fin_reel:,} unités au {date_fin.strftime('%d/%m/%Y')} (après réappros automatiques)",
- 
-        # ── Seuils ────────────────────────────────────────────
         "Seuil de sécurité (SS = Q1 × délai)"        : f"{safety_stock:,} unités — en dessous = risque rupture",
         "Point de réappro (ROP = Q3 × délai)"         : f"{reorder_point:,} unités — déclenche une commande automatique",
         "Stock optimal (ROP + Q2 × délai)"            : f"{stock_optimal:,} unités — cible lors d'une commande",
         "Stock maximum (ROP + (Q3+1.5×IQR) × délai)" : f"{stock_max:,} unités — au-delà = surstock",
- 
-        # ── Diagnostic ────────────────────────────────────────
         "Diagnostic"                    : risque,
         "Action recommandée"            : f"Commander {qte_cmd:,} unités" if qte_cmd > 0 else "Aucune commande requise",
         "Excédent"                      : f"{excedent:,} unités à réduire" if excedent > 0 else "Aucun excédent",
- 
-        # ── Simulation ────────────────────────────────────────
         "Nombre de commandes simulées"  : f"{sum(1 for c in cmd_sim if c > 0)} commande(s) automatique(s) déclenchée(s) sur l'horizon",
         "Total commandé (simulé)"       : f"{sum(c for c in cmd_sim if c > 0):,} unités au total sur l'horizon",
         "Stock actuel vs ROP"           : (
@@ -628,7 +603,7 @@ if btn:
             else f"{stock_actuel:,} ≤ {safety_stock:,} → EN DESSOUS du seuil de sécurité, risque élevé"
         ),
     }
- 
+
     with st.spinner("🧠 Analyse en cours..."):
         analyse = generer_analyse_stock(filtres, metriques)
     with st.container(border=True):
@@ -639,4 +614,3 @@ if btn:
         file_name=f"analyse_stock_{product}_{depot_sel}_{date_fin.strftime('%d%m%Y')}.txt",
         mime="text/plain"
     )
- 

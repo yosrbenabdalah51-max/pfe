@@ -468,7 +468,7 @@ st.session_state[sess_key] = {
 # =========================
 # 🤖 ANALYSE IA
 # =========================
-from analyse.generateur import generer_analyse_arima
+from analyse.generateur import generer_analyse_sarima
 
 st.divider()
 col_btn = st.columns([2, 2, 2])
